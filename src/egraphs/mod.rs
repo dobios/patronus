@@ -3,7 +3,7 @@
 // author: Kevin Laeufer <laeufer@cornell.edu>
 use crate::ir;
 use baa::WidthInt;
-use egg::{rewrite, Id};
+use egg::{rewrite, Id, Language};
 
 /// Shadow version of our `[crate::ir::Expr]` that abides by the `egg` rules.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
@@ -55,30 +55,53 @@ impl egg::FromOp for Expr {
     }
 }
 
-type ExprGraph<N> = egg::EGraph<Expr, N>;
-
 /// Convert from our internal representation to the shadow version suitable for egg.
 fn to_egg(ctx: &ir::Context, e: ir::ExprRef) -> egg::RecExpr<Expr> {
     let mut out = egg::RecExpr::default();
-    ir::traversal::bottom_up(ctx, e, |ctx, expr, children| match *expr {
+    ir::traversal::bottom_up(ctx, e, |_ctx, expr, children| match *expr {
         ir::Expr::BVSymbol { name, width } => out.add(Expr::BVSymbol { name, width }),
-        ir::Expr::BVNot(e, width) => out.add(Expr::BVNot([children[0]], width)),
+        ir::Expr::BVNot(_, width) => out.add(Expr::BVNot([children[0]], width)),
         _ => todo!(),
     });
     out
 }
 
-fn basic_rewrites() -> Vec<egg::Rewrite<Expr, ()>> {
-    vec![rewrite!("not-not"; "(not (not ?a))" => "?a")]
-}
-
 fn from_egg(ctx: &mut ir::Context, expr: &egg::RecExpr<Expr>) -> ir::ExprRef {
-    todo!("how can we convert a RecExpr back?")
+    let expressions = expr.as_ref();
+    let mut todo = vec![(expressions.len() - 1, false)];
+    let mut stack = Vec::with_capacity(4);
+
+    while let Some((e, bottom_up)) = todo.pop() {
+        let expr = &expressions[e];
+
+        // Check if there are children that we need to compute first.
+        if !bottom_up && !expr.children().is_empty() {
+            todo.push((e, true));
+            for child_id in expr.children() {
+                todo.push((usize::from(*child_id), false));
+            }
+            continue;
+        }
+
+        // Otherwise, all arguments are available on the stack for us to use.
+        let result = match expr {
+            Expr::BVSymbol { name, width } => ctx.symbol(*name, ir::Type::BV(*width)),
+            Expr::BVNot(_, _) => ctx.not(stack.pop().unwrap()),
+        };
+        stack.push(result);
+    }
+
+    debug_assert_eq!(stack.len(), 1);
+    stack.pop().unwrap()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn basic_rewrites() -> Vec<egg::Rewrite<Expr, ()>> {
+        vec![rewrite!("not-not"; "(not (not ?a))" => "?a")]
+    }
 
     #[test]
     fn test_not_not() {

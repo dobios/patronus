@@ -127,3 +127,78 @@ fn test_simplify_shift_left() {
     ts("shift_left(a : bv<3>, 3'd2)", "concat(a : bv<3>[0], 2'b00)");
     ts("shift_left(a : bv<3>, 3'd3)", "3'b000");
 }
+
+#[test]
+fn test_simplify_shift_right() {
+    // shift a constant by a constant
+    ts("shift_right(3'b101, 3'd0)", "3'b101");
+    ts("shift_right(3'b101, 3'd1)", "3'b010");
+    ts("shift_right(3'b101, 3'd2)", "3'b001");
+    ts("shift_right(3'b101, 3'd3)", "3'b000");
+
+    // shift by a constant
+    ts("shift_right(a : bv<3>, 3'd0)", "a : bv<3>");
+    ts("shift_right(a : bv<3>, 3'd1)", "zext(a : bv<3>[2:1], 1)");
+    ts("shift_right(a : bv<3>, 3'd2)", "zext(a : bv<3>[2], 2)");
+    ts("shift_right(a : bv<3>, 3'd3)", "3'b000");
+}
+
+#[test]
+fn test_simplify_arithmetic_shift_right() {
+    // shift a constant by a constant
+    ts("arithmetic_shift_right(3'b101, 3'd0)", "3'b101");
+    ts("arithmetic_shift_right(3'b101, 3'd1)", "3'b110");
+    ts("arithmetic_shift_right(3'b101, 3'd2)", "3'b111");
+    ts("arithmetic_shift_right(3'b101, 3'd3)", "3'b111");
+
+    // shift by a constant
+    ts("arithmetic_shift_right(a : bv<3>, 3'd0)", "a : bv<3>");
+    ts(
+        "arithmetic_shift_right(a : bv<3>, 3'd1)",
+        "sext(a : bv<3>[2:1], 1)",
+    );
+    ts(
+        "arithmetic_shift_right(a : bv<3>, 3'd2)",
+        "sext(a : bv<3>[2], 2)",
+    );
+    ts(
+        "arithmetic_shift_right(a : bv<3>, 3'd3)",
+        "sext(a : bv<3>[2], 2)",
+    );
+}
+
+#[test]
+fn test_simplify_add() {
+    // add constants
+    ts("add(true, true)", "false");
+    ts("add(true, false)", "true");
+    ts("add(false, false)", "false");
+    ts("add(15'd123, 15'd321)", "15'd444");
+
+    // add zero
+    ts("add(a : bv<4>, 4'd0)", "a : bv<4>");
+    ts("add(4'd0, a : bv<4>)", "a : bv<4>");
+}
+
+#[test]
+fn test_simplify_mul() {
+    // multiply constants
+    ts("mul(true, true)", "true");
+    ts("mul(true, false)", "false");
+    ts("mul(false, false)", "false");
+    ts("mul(17'd123, 17'd321)", "17'd39483");
+
+    // multiply with zero
+    ts("mul(a : bv<4>, 4'd0)", "4'd0");
+    ts("mul(4'd0, a : bv<4>)", "4'd0");
+
+    // multiply with one
+    ts("mul(a : bv<4>, 4'd1)", "a : bv<4>");
+    ts("mul(4'd1, a : bv<4>)", "a : bv<4>");
+
+    // multiply with power of two (this includes a simplification of the left shift)
+    // TODO
+    // ts("mul(a : bv<4>, 4'd2)", "zext(a : bv<4>[3:1], 1)");
+    // ts("mul(a : bv<4>, 4'd4)", "zext(a : bv<4>[3:2], 2)");
+    // ts("mul(a : bv<4>, 4'd8)", "zext(a : bv<4>[3], 3)");
+}

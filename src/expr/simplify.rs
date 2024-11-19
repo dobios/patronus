@@ -34,8 +34,14 @@ pub(crate) fn simplify(ctx: &mut Context, expr: ExprRef, children: &[ExprRef]) -
         (Expr::BVAnd(..), [a, b]) => simplify_bv_and(ctx, *a, *b),
         (Expr::BVOr(..), [a, b]) => simplify_bv_or(ctx, *a, *b),
         (Expr::BVXor(..), [a, b]) => simplify_bv_xor(ctx, *a, *b),
+        (Expr::BVAdd(..), [a, b]) => simplify_bv_add(ctx, *a, *b),
+        (Expr::BVMul(..), [a, b]) => simplify_bv_mul(ctx, *a, *b),
         (Expr::BVShiftLeft(_, _, w), [a, b]) => simplify_bv_shift_left(ctx, *a, *b, w),
+        (Expr::BVShiftRight(_, _, w), [a, b]) => simplify_bv_shift_right(ctx, *a, *b, w),
         (Expr::BVSignExt { by, .. }, [e]) => simplify_bv_sign_ext(ctx, *e, by),
+        (Expr::BVArithmeticShiftRight(_, _, w), [a, b]) => {
+            simplify_bv_arithmetic_shift_right(ctx, *a, *b, w)
+        }
         _ => None,
     }
 }
@@ -276,5 +282,100 @@ fn simplify_bv_shift_left(
             }
         }
         (_, _) => None,
+    }
+}
+
+fn simplify_bv_shift_right(
+    ctx: &mut Context,
+    a: ExprRef,
+    b: ExprRef,
+    width: WidthInt,
+) -> Option<ExprRef> {
+    match (ctx.get(a), ctx.get(b)) {
+        (Expr::BVLiteral(va), Expr::BVLiteral(vb)) => {
+            Some(ctx.bv_lit(&va.get(ctx).shift_right(&vb.get(ctx))))
+        }
+        (_, Expr::BVLiteral(by)) => {
+            let by = by.get(ctx);
+            if let Some(by) = by.to_u64() {
+                let by = by as WidthInt;
+                if by >= width {
+                    Some(ctx.zero(width))
+                } else if by == 0 {
+                    Some(a)
+                } else {
+                    let msb = width - 1;
+                    let lsb = by;
+                    Some(ctx.build(|c| c.zero_extend(c.slice(a, msb, lsb), by)))
+                }
+            } else {
+                Some(ctx.zero(width))
+            }
+        }
+        (_, _) => None,
+    }
+}
+
+fn simplify_bv_arithmetic_shift_right(
+    ctx: &mut Context,
+    a: ExprRef,
+    b: ExprRef,
+    width: WidthInt,
+) -> Option<ExprRef> {
+    match (ctx.get(a), ctx.get(b)) {
+        (Expr::BVLiteral(va), Expr::BVLiteral(vb)) => {
+            Some(ctx.bv_lit(&va.get(ctx).arithmetic_shift_right(&vb.get(ctx))))
+        }
+        (_, Expr::BVLiteral(by)) => {
+            let by = by.get(ctx);
+            if let Some(by) = by.to_u64() {
+                let by = by as WidthInt;
+                if by >= width {
+                    Some(ctx.build(|c| c.sign_extend(c.slice(a, width - 1, width - 1), width - 1)))
+                } else if by == 0 {
+                    Some(a)
+                } else {
+                    let msb = width - 1;
+                    let lsb = by;
+                    Some(ctx.build(|c| c.sign_extend(c.slice(a, msb, lsb), by)))
+                }
+            } else {
+                Some(ctx.build(|c| c.sign_extend(c.slice(a, width - 1, width - 1), width - 1)))
+            }
+        }
+        (_, _) => None,
+    }
+}
+
+fn simplify_bv_add(ctx: &mut Context, a: ExprRef, b: ExprRef) -> Option<ExprRef> {
+    match find_lits_commutative(ctx, a, b) {
+        Lits::Two(va, vb) => Some(ctx.bv_lit(&va.get(ctx).add(&vb.get(ctx)))),
+        Lits::One((va, _), b) => {
+            if va.get(ctx).is_zero() {
+                Some(b)
+            } else {
+                None
+            }
+        }
+        Lits::None(_, _) => None,
+    }
+}
+
+fn simplify_bv_mul(ctx: &mut Context, a: ExprRef, b: ExprRef) -> Option<ExprRef> {
+    match find_lits_commutative(ctx, a, b) {
+        Lits::Two(va, vb) => Some(ctx.bv_lit(&va.get(ctx).mul(&vb.get(ctx)))),
+        Lits::One((va, a), b) => {
+            let va = va.get(ctx);
+            if va.is_zero() {
+                // b * 0 -> 0
+                Some(a)
+            } else if va.is_one() {
+                // b * 1 -> b
+                Some(b)
+            } else {
+                None
+            }
+        }
+        Lits::None(_, _) => None,
     }
 }

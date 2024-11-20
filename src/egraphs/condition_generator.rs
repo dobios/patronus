@@ -8,6 +8,8 @@ use crate::egraphs::*;
 use egg::Language;
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
+use rustlearn::prelude::*;
+use rustlearn::trees::decision_tree::Hyperparameters;
 
 
 // Goal: Prove the correctness of the following example

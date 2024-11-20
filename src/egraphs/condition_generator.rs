@@ -5,6 +5,7 @@
 
 use crate::expr::*;
 use crate::egraphs::*;
+use clap::builder::StyledStr;
 use egg::Language;
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
@@ -45,7 +46,7 @@ use rustlearn::trees::decision_tree::Hyperparameters;
 struct SignedWidth {
     s: bool,
     w: u32,
-    sym: str
+    sym: &'static str
 }
 
 // Set of parameters to a condtion
@@ -108,7 +109,7 @@ pub fn gen_condition1(w_max: u32) -> String {
         }
     }
     // TODO: Construct the training data using the LUT and a predefined set of boolean features
-    todo()!;
+    todo!();
 }
 
 // Generates condition 1 as an artih expression
@@ -128,9 +129,40 @@ pub fn check_cond1(
     let a = ctx.bv_symbol("A", wa);
     let b = ctx.bv_symbol("B", wb);
     let c = ctx.bv_symbol("C", wc);
+    // lhs: a << (b + c)
     let lhs = ctx.build(|cx| {
-        
+        let sr = sa & sb & sc;
+        cx.apply_sign(
+            cx.shift_left(
+                cx.apply_sign(a, wa, sa),
+                cx.apply_sign(   
+                    cx.add( 
+                        cx.apply_sign(b, wb, sb),
+                        cx.apply_sign(c, wc, sc)
+                    ), wbc, sbc
+                )
+            ), wr, sr
+        )
     });
-
+    // rhs: (a << b) << c
+    let rhs = ctx.build(|cx| {
+        let sr = sa & sb & sc;
+        cx.apply_sign(
+            cx.shift_left(
+                cx.apply_sign(
+                    cx.shift_left( 
+                        cx.apply_sign(a, wa, sa),
+                        cx.apply_sign(b, wb, sb)
+                    ), wab, sab
+                ),
+                cx.apply_sign(c, wc, sc)
+            ), wr, sr
+        )
+    });
+    // check validity of the rewrite
+    let miter = ctx.build(|cx| {
+        cx.not(cx.bv_equal(lhs, rhs))
+    });
+    // TODO: Call SMT solver to check the miter and return result
     todo!();
  }

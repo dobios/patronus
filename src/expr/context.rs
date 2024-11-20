@@ -333,6 +333,10 @@ impl Context {
             self.add_expr(Expr::BVSignExt { e, by, width })
         }
     }
+    pub fn apply_sign(&mut self, e:ExprRef, by: WidthInt, s: bool) -> ExprRef {
+        if s { self.sign_extend(e, by) } 
+        else { self.zero_extend(e, by) }
+    }
 
     pub fn array_store(&mut self, array: ExprRef, index: ExprRef, data: ExprRef) -> ExprRef {
         self.add_expr(Expr::ArrayStore { array, index, data })
@@ -500,6 +504,9 @@ impl<'a> Builder<'a> {
     }
     pub fn sign_extend(&self, e: ExprRef, by: WidthInt) -> ExprRef {
         self.ctx.borrow_mut().sign_extend(e, by)
+    }
+    pub fn apply_sign(&self, e: ExprRef, by: WidthInt, s: bool) -> ExprRef {
+        self.ctx.borrow_mut().apply_sign(e, by, s)
     }
 
     pub fn array_store(&self, array: ExprRef, index: ExprRef, data: ExprRef) -> ExprRef {

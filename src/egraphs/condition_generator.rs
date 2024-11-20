@@ -1,7 +1,7 @@
 // Copyright 2024 Cornell University
 // released under BSD 3-Clause License
 // author: Amelia Dobis <amelia.dobis@princeton.edu>
-// author: Mohanne Shahrad <mohanna@princeton.edu>
+// author: Mohanna Shahrad <mohanna@princeton.edu>
 
 use crate::expr::*;
 use crate::egraphs::*;
@@ -72,6 +72,7 @@ pub fn gen_condition1(w_max: u32) -> String {
                                     for sc in 0..1 {
                                         for sbc in 0..1 {
                                             for sab in 0..1 {
+                                                // Check if the concrete rewrite is legal
                                                 let check = check_cond1(
                                                     wr, wa, wb, wc, wbc, wab, 
                                                     sa == 1, sb == 1, sc == 1, sbc == 1, sab == 1
@@ -103,7 +104,8 @@ pub fn gen_condition1(w_max: u32) -> String {
             }
         }
     }
-    return "".to_string();
+    // TODO: Construct the training data using the LUT and a predefined set of boolean features
+    todo()!;
 }
 
 // Generates condition 1 as an artih expression

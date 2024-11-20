@@ -173,10 +173,10 @@ pub fn check_cond1(
  }
 
 
-  // Given the LUT, generates the boolean features (for classifier fitting).
- // Input: LUT generated for each condition
- // Output: Vector of Boolean Features (for each ConditionParam, a vector of (String, bool) that represents the boolean feature)
- // TODO: maybe we wnat selective inclusion of the features, right now all of them are included
+// Given the LUT, generates the boolean features (for classifier fitting).
+// Input: LUT generated for each condition
+// Output: Vector of Boolean Features (for each ConditionParam, a vector of (String, bool) that represents the boolean feature)
+// TODO: maybe we wnat selective inclusion of the features, right now all of them are included
  pub fn gen_boolean_features(lut: &Vec<(ConditionParam, bool)>) -> Vec<BooleanFeature> {
 
     let mut features = Vec::new();

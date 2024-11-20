@@ -42,7 +42,8 @@ use std::fmt::{Display, Formatter};
 // Associates a sign to a width
 struct SignedWidth {
     s: bool,
-    w: u32
+    w: u32,
+    sym: str
 }
 
 // Set of parameters to a condtion
@@ -84,11 +85,11 @@ pub fn gen_condition1(w_max: u32) -> String {
                                                         (ConditionParam {
                                                             wr,
                                                             params: vec![
-                                                                SignedWidth { w: wa, s: sa == 1 },
-                                                                SignedWidth { w: wb, s: sb == 1 },
-                                                                SignedWidth { w: wc, s: sc == 1 },
-                                                                SignedWidth { w: wbc, s: sbc == 1 },
-                                                                SignedWidth { w: wab, s: sab == 1}
+                                                                SignedWidth { sym: "wa", w: wa, s: sa == 1 },
+                                                                SignedWidth { sym: "wb", w: wb, s: sb == 1 },
+                                                                SignedWidth { sym: "wc", w: wc, s: sc == 1 },
+                                                                SignedWidth { sym: "wbc", w: wbc, s: sbc == 1 },
+                                                                SignedWidth { sym: "wab", w: wab, s: sab == 1 }
                                                             ]
                                                         }, c)
                                                     );
@@ -114,8 +115,20 @@ pub fn gen_condition1(w_max: u32) -> String {
 // if unsat -> true
 // if sat -> false
 // if error -> skip
+// rewrite rule: a << (b + c) -> (a << b) << c
 pub fn check_cond1(
     wr: u32, wa: u32, wb: u32, wc: u32,
     wbc: u32, wab: u32, sa: bool, sb: bool,
     sc: bool, sbc: bool, sab: bool 
-) -> Option<bool> { todo!(); }
+) -> Option<bool> { 
+    // Encode rewrite rule
+    let mut ctx = Context::default();
+    let a = ctx.bv_symbol("A", wa);
+    let b = ctx.bv_symbol("B", wb);
+    let c = ctx.bv_symbol("C", wc);
+    let lhs = ctx.build(|cx| {
+        
+    });
+
+    todo!();
+ }

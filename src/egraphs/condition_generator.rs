@@ -55,6 +55,11 @@ struct ConditionParam {
     params: Vec<SignedWidth>
 }
 
+struct BooleanFeature<'a> {
+    param: &'a ConditionParam,
+    features: Vec<(String, bool)>,
+}
+
 // Condition generation for the following rewrite rule
 // 1. a << (b + c) -> (a << b) << c
 // @param w_max: the max width we support in the condition
@@ -166,3 +171,86 @@ pub fn check_cond1(
     // TODO: Call SMT solver to check the miter and return result
     todo!();
  }
+
+
+  // Given the LUT, generates the boolean features (for classifier fitting).
+ // Input: LUT generated for each condition
+ // Output: Vector of Boolean Features (for each ConditionParam, a vector of (String, bool) that represents the boolean feature)
+ // TODO: maybe we wnat selective inclusion of the features, right now all of them are included
+ pub fn gen_boolean_features(lut: &Vec<(ConditionParam, bool)>) -> Vec<BooleanFeature> {
+
+    let mut features = Vec::new();
+
+    // For demonstration: printing out the vector content
+    for (param, flag) in lut {
+
+        let mut feature_list = Vec::new();
+
+        // Sign feature -> forall i: si == unsigned
+        for sw in &param.params {
+
+            let feature_name = format!("s_{}", sw.sym); 
+            let feature_value = !sw.s; 
+            feature_list.push((feature_name, feature_value));
+
+        }
+
+        // Width Equality and Inequality Features (features 14 - 15 - 16 in the paper)
+        for i in 0..param.params.len() {
+            for j in i + 1..param.params.len() {
+                let sw1 = &param.params[i];
+                let sw2 = &param.params[j];
+                
+                // Create the feature name in the form "w_<sym1> == w_<sym2>"
+                let feature_width_eq = format!("w_{} == w_{}", sw1.sym, sw2.sym);
+                let feature_width_neq = format!("w_{} < w_{}", sw1.sym, sw2.sym);
+                let feature_width_increment = format!("w_{} + 1 < w_{}", sw1.sym, sw2.sym);
+                let feature_width_decrement = format!("w_{} - 1 < w_{}", sw1.sym, sw2.sym);
+                
+                // The value of the feature is true if the widths are equal, false otherwise
+                let width_eq_value = sw1.w == sw2.w;
+                let width_neq_value = sw1.w < sw2.w;
+                let width_increment_value = sw1.w + 1 < sw2.w;
+                let width_decrement_value = sw1.w - 1 < sw2.w;
+
+                feature_list.push((feature_width_eq, width_eq_value));
+                feature_list.push((feature_width_neq, width_neq_value));
+                feature_list.push((feature_width_increment, width_increment_value));
+                feature_list.push((feature_width_decrement, width_decrement_value));
+            }
+        }
+
+        // Sum and Shift Boolean Features (features 17 - 18 in the paper)
+        for i in 0..param.params.len() {
+            for j in 0..param.params.len() {
+                for k in 0..param.params.len() {
+                    if i != j && j != k && i != k {
+                        let sw1 = &param.params[i];
+                        let sw2 = &param.params[j];
+                        let sw3 = &param.params[k];
+                        
+                        // Create the feature name in the form "w_<sym1> == w_<sym2>"
+                        let feature_sum = format!("w_{} + w_{} < w_{}", sw1.sym, sw2.sym, sw3.sym);
+                        let feature_shift = format!("w_{} + 2^w_{} < w_{}", sw1.sym, sw2.sym, sw3.sym);
+
+                        // The value of the feature is true if the widths are equal, false otherwise
+                        let width_sum_value = sw1.w + sw2.w < sw3.w;
+                        let width_shift_value = sw1.w + 2u32.pow(sw2.w) < sw3.w;
+
+                        feature_list.push((feature_sum, width_sum_value));
+                        feature_list.push((feature_shift, width_shift_value));
+                    }
+                }
+            }
+        }
+
+        let boolean_feature = BooleanFeature {
+            param: param,       // we are borrowing the param instead of cloning
+            features: feature_list,
+        };
+
+        features.push(boolean_feature);
+    }
+
+    features
+}

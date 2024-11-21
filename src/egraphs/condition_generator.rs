@@ -3,15 +3,8 @@
 // author: Amelia Dobis <amelia.dobis@princeton.edu>
 // author: Mohanna Shahrad <mohanna@princeton.edu>
 
-use crate::expr::*;
-use crate::egraphs::*;
-use clap::builder::StyledStr;
-use egg::Language;
-use std::cmp::Ordering;
-use std::fmt::{Display, Formatter};
-use rustlearn::prelude::*;
-use rustlearn::trees::decision_tree::Hyperparameters;
-
+use crate::{expr::*, mc::{check_assuming, BITWUZLA_CMD}, smt::convert_expr};
+use easy_smt::Response;
 
 // Goal: Prove the correctness of the following example
 // module spec (A, B ,M, N, O);
@@ -159,10 +152,28 @@ pub fn check_cond1(
             ), wr, sr
         )
     });
-    // check validity of the rewrite
+    // Check validity of the rewrite
     let miter = ctx.build(|cx| {
         cx.not(cx.bv_equal(lhs, rhs))
     });
-    // TODO: Call SMT solver to check the miter and return result
-    todo!();
+    // Create a solver instance
+    let solver = BITWUZLA_CMD;
+    let mut smt_ctx = easy_smt::ContextBuilder::new()
+            .solver(solver.name, solver.args)
+            .build().unwrap();
+    smt_ctx.set_logic("QF_ABV").unwrap();
+
+    let smt_expr = convert_expr(
+        &smt_ctx, &ctx,
+        miter, &|_| None
+    );
+
+    // Call the solver to check the result
+    let resp = check_assuming(
+        &mut smt_ctx, smt_expr, &solver
+    ).unwrap();
+    if resp == Response::Unknown {
+        return None
+    }
+    Some(resp == Response::Unsat)
  }

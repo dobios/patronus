@@ -4,9 +4,18 @@
 // author: Kevin Laeufer <laeufer@cornell.edu>
 
 use super::{
-    do_transform_expr, BVLitValue, Context, Expr, ExprMetaData, ExprRef, TypeCheck, WidthInt,
+    do_transform_expr, BVLitValue, Context, Expr, ExprMetaData, ExprRef, SparseExprMetaData,
+    TypeCheck, WidthInt,
 };
+use crate::expr::meta::extract_fixed_point;
+use crate::expr::transform::ExprTransformMode;
 use baa::BitVecOps;
+
+/// Applies simplifications to a single expression.
+pub fn simplify_single_expression(ctx: &mut Context, expr: ExprRef) -> ExprRef {
+    let mut simplifier = Simplifier::new(SparseExprMetaData::default());
+    simplifier.simplify(ctx, expr)
+}
 
 /// Performs simplification and canonicalization on expressions and caches the results.
 pub struct Simplifier<T: ExprMetaData<Option<ExprRef>>> {
@@ -19,8 +28,14 @@ impl<T: ExprMetaData<Option<ExprRef>>> Simplifier<T> {
     }
 
     pub fn simplify(&mut self, ctx: &mut Context, e: ExprRef) -> ExprRef {
-        do_transform_expr(ctx, &mut self.cache, vec![e], simplify);
-        self.cache[e].unwrap()
+        do_transform_expr(
+            ctx,
+            ExprTransformMode::FixedPoint,
+            &mut self.cache,
+            vec![e],
+            simplify,
+        );
+        extract_fixed_point(&self.cache, e)
     }
 }
 
@@ -92,7 +107,7 @@ fn simplify_ite(ctx: &mut Context, cond: ExprRef, tru: ExprRef, fals: ExprRef) -
 enum Lits {
     Two(BVLitValue, BVLitValue),
     One((BVLitValue, ExprRef), ExprRef),
-    None(ExprRef, ExprRef),
+    None,
 }
 
 /// Finds the maximum number of literals. Only works on commutative operations.
@@ -102,7 +117,7 @@ fn find_lits_commutative(ctx: &Context, a: ExprRef, b: ExprRef) -> Lits {
         (Expr::BVLiteral(va), Expr::BVLiteral(vb)) => Lits::Two(*va, *vb),
         (Expr::BVLiteral(va), _) => Lits::One((*va, a), b),
         (_, Expr::BVLiteral(vb)) => Lits::One((*vb, b), a),
-        (_, _) => Lits::None(a, b),
+        (_, _) => Lits::None,
     }
 }
 
@@ -130,7 +145,7 @@ fn simplify_bv_and(ctx: &mut Context, a: ExprRef, b: ExprRef) -> Option<ExprRef>
                 None
             }
         }
-        Lits::None(_, _) => {
+        Lits::None => {
             match (ctx.get(a), ctx.get(b)) {
                 // a & !a -> 0
                 (Expr::BVNot(inner, w), _) if *inner == b => Some(ctx.zero(*w)),
@@ -164,7 +179,7 @@ fn simplify_bv_or(ctx: &mut Context, a: ExprRef, b: ExprRef) -> Option<ExprRef> 
                 None
             }
         }
-        Lits::None(_, _) => {
+        Lits::None => {
             match (ctx.get(a), ctx.get(b)) {
                 // a | !a -> 1
                 (Expr::BVNot(inner, w), _) if *inner == b => Some(ctx.ones(*w)),
@@ -199,7 +214,7 @@ fn simplify_bv_xor(ctx: &mut Context, a: ExprRef, b: ExprRef) -> Option<ExprRef>
                 None
             }
         }
-        Lits::None(_, _) => {
+        Lits::None => {
             match (ctx.get(a), ctx.get(b)) {
                 // a xor !a -> 1
                 (Expr::BVNot(inner, w), _) if *inner == b => Some(ctx.ones(*w)),
@@ -357,7 +372,7 @@ fn simplify_bv_add(ctx: &mut Context, a: ExprRef, b: ExprRef) -> Option<ExprRef>
                 None
             }
         }
-        Lits::None(_, _) => None,
+        Lits::None => None,
     }
 }
 
@@ -372,10 +387,14 @@ fn simplify_bv_mul(ctx: &mut Context, a: ExprRef, b: ExprRef) -> Option<ExprRef>
             } else if va.is_one() {
                 // b * 1 -> b
                 Some(b)
+            } else if let Some(log_2) = va.is_pow_2() {
+                // b * 2**log_2 -> b
+                let log_2 = ctx.bit_vec_val(log_2, va.width());
+                Some(ctx.shift_left(b, log_2))
             } else {
                 None
             }
         }
-        Lits::None(_, _) => None,
+        Lits::None => None,
     }
 }

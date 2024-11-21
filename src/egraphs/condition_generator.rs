@@ -36,19 +36,19 @@ use easy_smt::Response;
 // 4. a * 2 -> a + a
 
 // Associates a sign to a width
-struct SignedWidth {
+pub struct SignedWidth {
     s: bool,
     w: u32,
     sym: &'static str
 }
 
 // Set of parameters to a condtion
-struct ConditionParam {
+pub struct ConditionParam {
     wr: u32,
     params: Vec<SignedWidth>
 }
 
-struct BooleanFeature<'a> {
+pub struct BooleanFeature<'a> {
     param: &'a ConditionParam,
     features: Vec<(String, bool)>,
 }

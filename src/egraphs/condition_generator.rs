@@ -5,6 +5,10 @@
 
 use crate::{expr::*, mc::{check_assuming, BITWUZLA_CMD}, smt::convert_expr};
 use easy_smt::Response;
+use linfa::dataset::Dataset;
+use linfa::prelude::*;
+use linfa_trees::DecisionTree;
+use ndarray::{Array2, Array1};
 
 // Goal: Prove the correctness of the following example
 // module spec (A, B ,M, N, O);
@@ -48,7 +52,7 @@ pub struct ConditionParam {
     params: Vec<SignedWidth>
 }
 
-pub struct BooleanFeature<'a> {
+struct BooleanFeature<'a> {
     param: &'a ConditionParam,
     features: Vec<(String, bool)>,
 }
@@ -183,85 +187,105 @@ pub fn check_cond1(
     Some(resp == Response::Unsat)
  }
 
+// Given the LUT, fit the data in a DecisionClassifier
+// TODO: the return value of this function should be a string of the final formula
+pub fn fit_decision_classifier<'a>(lut: &'a Vec<(ConditionParam, bool)>) {
+    
+    let mut features = Vec::with_capacity(lut.len());
+    let mut labels = Vec::with_capacity(lut.len());
 
-// Given the LUT, generates the boolean features (for classifier fitting).
-// Input: LUT generated for each condition
-// Output: Vector of Boolean Features (for each ConditionParam, a vector of (String, bool) that represents the boolean feature)
-// TODO: maybe we wnat selective inclusion of the features, right now all of them are included
- pub fn gen_boolean_features(lut: &Vec<(ConditionParam, bool)>) -> Vec<BooleanFeature> {
+    for (param, eq_result) in lut {
+        let feature_list = gen_boolean_features(param);
+        features.push(BooleanFeature {
+            param,
+            features: feature_list,
+        });
 
-    let mut features = Vec::new();
+        // Add label (convert bool to 1 or 0)
+        labels.push(if *eq_result { 1 } else { 0 });
+    }
 
-    // For demonstration: printing out the vector content
-    for (param, flag) in lut {
+    let feature_vectors = features.iter()
+        .map(|feature| feature.features.iter()
+            .map(|(_, value)| if *value { 1.0 } else { 0.0 })
+            .collect::<Vec<_>>())
+        .collect::<Vec<_>>();
 
-        let mut feature_list = Vec::new();
+    let num_rows = feature_vectors.len();
+    let num_cols = feature_vectors[0].len();
 
-        // Sign feature -> forall i: si == unsigned
-        for sw in &param.params {
+    let features_array = Array2::from_shape_vec(
+        (num_rows, num_cols),
+        feature_vectors.into_iter().flatten().collect()).unwrap();
 
-            let feature_name = format!("s_{}", sw.sym); 
-            let feature_value = !sw.s; 
-            feature_list.push((feature_name, feature_value));
+    let labels_array: Array1<i32> = Array1::from(labels);
+    let labels_usize: Array1<usize> = labels_array.mapv(|x| x as usize);
 
+    // Make the dataset: labels are the result of the EC check, features are the Boolean Features extracted
+    let dataset = Dataset::new(features_array, labels_usize);
+
+    // Build the DecisionTreeClassifier
+    let model = DecisionTree::params()
+        .max_depth(Some(5)) // Max depth for the decision tree
+        .fit(&dataset)   
+        .unwrap();
+
+    let accuracy = model.predict(&dataset)
+        .confusion_matrix(&dataset)
+        .unwrap()
+        .accuracy();
+
+    println!("Trained decision tree accuracy:\n{:?}", accuracy);
+    println!("Model:\n{:?}", model);
+}
+
+// Given a single ConditionParam from the LUT, generates the boolean features
+fn gen_boolean_features(param: &ConditionParam) -> Vec<(String, bool)> {
+    let mut feature_list = Vec::new();
+
+    // Generate Sign features
+    for sw in &param.params {
+        let feature_name = format!("s_{}", sw.sym);
+        let feature_value = !sw.s; // Negate the sign
+        feature_list.push((feature_name, feature_value));
+    }
+
+    // Generate Width Equality and Inequality features
+    for i in 0..param.params.len() {
+        for j in i + 1..param.params.len() {
+            let sw1 = &param.params[i];
+            let sw2 = &param.params[j];
+            feature_list.push((
+                format!("w_{} == w_{}", sw1.sym, sw2.sym),
+                sw1.w == sw2.w,
+            ));
+            feature_list.push((
+                format!("w_{} < w_{}", sw1.sym, sw2.sym),
+                sw1.w < sw2.w,
+            ));
         }
+    }
 
-        // Width Equality and Inequality Features (features 14 - 15 - 16 in the paper)
-        for i in 0..param.params.len() {
-            for j in i + 1..param.params.len() {
-                let sw1 = &param.params[i];
-                let sw2 = &param.params[j];
-                
-                // Create the feature name in the form "w_<sym1> == w_<sym2>"
-                let feature_width_eq = format!("w_{} == w_{}", sw1.sym, sw2.sym);
-                let feature_width_neq = format!("w_{} < w_{}", sw1.sym, sw2.sym);
-                let feature_width_increment = format!("w_{} + 1 < w_{}", sw1.sym, sw2.sym);
-                let feature_width_decrement = format!("w_{} - 1 < w_{}", sw1.sym, sw2.sym);
-                
-                // The value of the feature is true if the widths are equal, false otherwise
-                let width_eq_value = sw1.w == sw2.w;
-                let width_neq_value = sw1.w < sw2.w;
-                let width_increment_value = sw1.w + 1 < sw2.w;
-                let width_decrement_value = sw1.w - 1 < sw2.w;
-
-                feature_list.push((feature_width_eq, width_eq_value));
-                feature_list.push((feature_width_neq, width_neq_value));
-                feature_list.push((feature_width_increment, width_increment_value));
-                feature_list.push((feature_width_decrement, width_decrement_value));
-            }
-        }
-
-        // Sum and Shift Boolean Features (features 17 - 18 in the paper)
-        for i in 0..param.params.len() {
-            for j in 0..param.params.len() {
-                for k in 0..param.params.len() {
-                    if i != j && j != k && i != k {
-                        let sw1 = &param.params[i];
-                        let sw2 = &param.params[j];
-                        let sw3 = &param.params[k];
-                        
-                        // Create the feature name in the form "w_<sym1> == w_<sym2>"
-                        let feature_sum = format!("w_{} + w_{} < w_{}", sw1.sym, sw2.sym, sw3.sym);
-                        let feature_shift = format!("w_{} + 2^w_{} < w_{}", sw1.sym, sw2.sym, sw3.sym);
-
-                        // The value of the feature is true if the widths are equal, false otherwise
-                        let width_sum_value = sw1.w + sw2.w < sw3.w;
-                        let width_shift_value = sw1.w + 2u32.pow(sw2.w) < sw3.w;
-
-                        feature_list.push((feature_sum, width_sum_value));
-                        feature_list.push((feature_shift, width_shift_value));
-                    }
+    // Generate Sum and Shift Boolean Features
+    for i in 0..param.params.len() {
+        for j in 0..param.params.len() {
+            for k in 0..param.params.len() {
+                if i != j && j != k && i != k {
+                    let sw1 = &param.params[i];
+                    let sw2 = &param.params[j];
+                    let sw3 = &param.params[k];
+                    feature_list.push((
+                        format!("w_{} + w_{} < w_{}", sw1.sym, sw2.sym, sw3.sym),
+                        sw1.w + sw2.w < sw3.w,
+                    ));
+                    feature_list.push((
+                        format!("w_{} + 2^w_{} < w_{}", sw1.sym, sw2.sym, sw3.sym),
+                        sw1.w + 2u32.pow(sw2.w) < sw3.w,
+                    ));
                 }
             }
         }
-
-        let boolean_feature = BooleanFeature {
-            param: param,       // we are borrowing the param instead of cloning
-            features: feature_list,
-        };
-
-        features.push(boolean_feature);
     }
 
-    features
+    feature_list
 }

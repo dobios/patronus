@@ -240,7 +240,7 @@ pub fn fit_decision_classifier<'a>(lut: &'a Vec<(ConditionParam, bool)>) {
 }
 
 // Given a single ConditionParam from the LUT, generates the boolean features
-fn gen_boolean_features(param: &ConditionParam) -> Vec<(String, bool)> {
+pub fn gen_boolean_features(param: &ConditionParam) -> Vec<(String, bool)> {
     let mut feature_list = Vec::new();
 
     // Generate Sign features

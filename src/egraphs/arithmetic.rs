@@ -3,8 +3,7 @@
 // author: Kevin Laeufer <laeufer@cornell.edu>
 
 use crate::expr::*;
-use clap::builder::Str;
-use egg::{Language, Symbol};
+use egg::{FromOp, Language};
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 
@@ -120,7 +119,8 @@ impl egg::FromOp for Arith {
             ),
             _ => panic!("Invalid op name: {}", op)
         };
-        todo!()
+        //TODO: Replace with real implementation
+        Ok(a)
     }
 }
 

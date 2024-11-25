@@ -52,7 +52,7 @@ pub struct ConditionParam {
     params: Vec<SignedWidth>
 }
 
-struct BooleanFeature<'a> {
+pub struct BooleanFeature<'a> {
     param: &'a ConditionParam,
     features: Vec<(String, bool)>,
 }
@@ -117,9 +117,6 @@ pub fn gen_condition1(w_max: u32) -> String {
 // Generates condition 1 as an artih expression
 // Converts this expression to btor2
 // Checks the btor2 version of the expression using bitwuzla
-// if unsat -> true
-// if sat -> false
-// if error -> skip
 // rewrite rule: a << (b + c) -> (a << b) << c
 pub fn check_cond1(
     wr: u32, wa: u32, wb: u32, wc: u32,
@@ -161,7 +158,17 @@ pub fn check_cond1(
             ), wr, sr
         )
     });
+    
     // Check validity of the rewrite
+    check(&mut ctx, lhs, rhs)
+}
+
+// Checks the validity of a rewrite rule using bitwuzla
+// returns Some(true) if unsat
+//         Some(false) if sat
+//         None if error
+pub fn check(ctx: &mut Context, lhs: ExprRef, rhs: ExprRef) -> Option<bool> {
+    // Build out miter for EC
     let miter = ctx.build(|cx| {
         cx.not(cx.bv_equal(lhs, rhs))
     });
@@ -185,7 +192,7 @@ pub fn check_cond1(
         return None
     }
     Some(resp == Response::Unsat)
- }
+}
 
 // Given the LUT, fit the data in a DecisionClassifier
 // TODO: the return value of this function should be a string of the final formula

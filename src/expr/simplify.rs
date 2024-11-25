@@ -7,9 +7,10 @@ use super::{
     do_transform_expr, BVLitValue, Context, Expr, ExprMetaData, ExprRef, SparseExprMetaData,
     TypeCheck, WidthInt,
 };
-use crate::expr::meta::extract_fixed_point;
+use crate::expr::meta::get_fixed_point;
 use crate::expr::transform::ExprTransformMode;
 use baa::BitVecOps;
+use smallvec::{smallvec, SmallVec};
 
 /// Applies simplifications to a single expression.
 pub fn simplify_single_expression(ctx: &mut Context, expr: ExprRef) -> ExprRef {
@@ -35,7 +36,7 @@ impl<T: ExprMetaData<Option<ExprRef>>> Simplifier<T> {
             vec![e],
             simplify,
         );
-        extract_fixed_point(&self.cache, e)
+        get_fixed_point(&mut self.cache, e).unwrap()
     }
 }
 
@@ -46,6 +47,8 @@ pub(crate) fn simplify(ctx: &mut Context, expr: ExprRef, children: &[ExprRef]) -
         (Expr::BVZeroExt { by, .. }, [e]) => simplify_bv_zero_ext(ctx, *e, by),
         (Expr::BVSlice { lo, hi, .. }, [e]) => simplify_bv_slice(ctx, *e, hi, lo),
         (Expr::BVIte { .. }, [cond, tru, fals]) => simplify_ite(ctx, *cond, *tru, *fals),
+        (Expr::BVConcat(..), [a, b]) => simplify_bv_concat(ctx, *a, *b),
+        (Expr::BVEqual(..), [a, b]) => simplify_bv_equal(ctx, *a, *b),
         (Expr::BVAnd(..), [a, b]) => simplify_bv_and(ctx, *a, *b),
         (Expr::BVOr(..), [a, b]) => simplify_bv_or(ctx, *a, *b),
         (Expr::BVXor(..), [a, b]) => simplify_bv_xor(ctx, *a, *b),
@@ -85,23 +88,44 @@ fn simplify_ite(ctx: &mut Context, cond: ExprRef, tru: ExprRef, fals: ExprRef) -
         ctx.get(tru).get_bv_type(ctx)
     );
     if value_width == 1 {
-        if let (Expr::BVLiteral(vt), Expr::BVLiteral(vf)) = (ctx.get(tru), ctx.get(fals)) {
-            let res = match (
-                vt.get(ctx).to_bool().unwrap(),
-                vf.get(ctx).to_bool().unwrap(),
-            ) {
-                // ite(cond, true, false) -> cond
-                (true, false) => cond,
-                // ite(cond, false, true) -> !cond
-                (false, true) => ctx.not(cond),
-                _ => unreachable!(
-                    "both arguments are the same, this should have been handled earlier"
-                ),
-            };
-            return Some(res);
+        // boolean value simplifications
+        match (ctx.get(tru), ctx.get(fals)) {
+            (Expr::BVLiteral(vt), Expr::BVLiteral(vf)) => {
+                let res = match (
+                    vt.get(ctx).to_bool().unwrap(),
+                    vf.get(ctx).to_bool().unwrap(),
+                ) {
+                    // ite(cond, true, false) -> cond
+                    (true, false) => cond,
+                    // ite(cond, false, true) -> !cond
+                    (false, true) => ctx.not(cond),
+                    _ => unreachable!(
+                        "both arguments are the same, this should have been handled earlier"
+                    ),
+                };
+                Some(res)
+            }
+            (Expr::BVLiteral(vt), _) => {
+                match vt.get(ctx).to_bool().unwrap() {
+                    // ite(c, true, b) -> c | b
+                    true => Some(ctx.or(cond, fals)),
+                    // ite(c, false, b) -> !c & b
+                    false => Some(ctx.build(|c| c.and(c.not(cond), fals))),
+                }
+            }
+            (_, Expr::BVLiteral(vf)) => {
+                match vf.get(ctx).to_bool().unwrap() {
+                    // ite(c, a, true) -> !c | a
+                    true => Some(ctx.build(|c| c.or(c.not(cond), tru))),
+                    // ite(c, a, false) -> c & a
+                    false => Some(ctx.and(cond, tru)),
+                }
+            }
+            _ => None,
         }
+    } else {
+        None
     }
-    None
 }
 
 enum Lits {
@@ -119,6 +143,53 @@ fn find_lits_commutative(ctx: &Context, a: ExprRef, b: ExprRef) -> Lits {
         (_, Expr::BVLiteral(vb)) => Lits::One((*vb, b), a),
         (_, _) => Lits::None,
     }
+}
+
+#[inline]
+fn find_one_concat(ctx: &Context, a: ExprRef, b: ExprRef) -> Option<(ExprRef, ExprRef, ExprRef)> {
+    match (ctx.get(a), ctx.get(b)) {
+        (Expr::BVConcat(c_a, c_b, _), _) => Some((*c_a, *c_b, b)),
+        (_, Expr::BVConcat(c_a, c_b, _)) => Some((*c_a, *c_b, a)),
+        _ => None,
+    }
+}
+
+fn simplify_bv_equal(ctx: &mut Context, a: ExprRef, b: ExprRef) -> Option<ExprRef> {
+    // a == a -> true
+    if a == b {
+        return Some(ctx.tru());
+    }
+
+    match find_lits_commutative(ctx, a, b) {
+        Lits::Two(va, vb) => {
+            // two values that are the same should always be hash-consed to the same ExprRef
+            debug_assert!(!va.get(ctx).is_equal(&vb.get(ctx)));
+            return Some(ctx.fals());
+        }
+        Lits::One((lit, _), expr) => {
+            if lit.is_true() {
+                // a == true -> a
+                return Some(expr);
+            } else if lit.is_false() {
+                // a == false -> !a
+                return Some(ctx.not(expr));
+            }
+        }
+        Lits::None => {}
+    }
+
+    // check to see if we are comparing to a concat
+    if let Some((concat_a, concat_b, other)) = find_one_concat(ctx, a, b) {
+        let a_width = ctx.get(concat_a).get_bv_type(ctx).unwrap();
+        let b_width = ctx.get(concat_b).get_bv_type(ctx).unwrap();
+        let width = a_width + b_width;
+        debug_assert_eq!(width, other.get_bv_type(ctx).unwrap());
+        let eq_a = ctx.build(|c| c.bv_equal(concat_a, c.slice(other, width - 1, width - a_width)));
+        let eq_b = ctx.build(|c| c.bv_equal(concat_b, c.slice(other, b_width - 1, 0)));
+        return Some(ctx.and(eq_a, eq_b));
+    }
+
+    None
 }
 
 fn simplify_bv_and(ctx: &mut Context, a: ExprRef, b: ExprRef) -> Option<ExprRef> {
@@ -141,8 +212,44 @@ fn simplify_bv_and(ctx: &mut Context, a: ExprRef, b: ExprRef) -> Option<ExprRef>
                 // a & 1 -> a
                 Some(expr)
             } else {
-                // TODO: deal with partial masks, like: a & 0xf0 -> a[7:4] # 4'd0
-                None
+                // (a # b) & mask -> ((a & mask_upper) # (b & mask_lower))
+                if let Expr::BVConcat(a, b, width) = ctx.get(expr).clone() {
+                    let b_width = b.get_bv_type(ctx).unwrap();
+                    debug_assert_eq!(width, b_width + a.get_bv_type(ctx).unwrap());
+                    let a_mask = ctx.bv_lit(&lit.get(ctx).slice(width - 1, b_width));
+                    let b_mask = ctx.bv_lit(&lit.get(ctx).slice(b_width - 1, 0));
+                    Some(ctx.build(|c| c.concat(c.and(a, a_mask), c.and(b, b_mask))))
+                } else {
+                    // deal with bit mask
+                    let width = expr.get_bv_type(ctx).unwrap();
+                    let ones = lit.get(ctx).bit_set_intervals();
+                    debug_assert!(!ones.is_empty());
+                    let mut bit = 0;
+                    let mut values: SmallVec<[ExprRef; 6]> = smallvec![];
+                    for interval in ones.into_iter() {
+                        if interval.start > bit {
+                            // zero
+                            values.push(ctx.zero(interval.start - bit));
+                        }
+                        // slice
+                        values.push(ctx.slice(expr, interval.end - 1, interval.start));
+                        // remember end of slice
+                        bit = interval.end;
+                    }
+                    // zero at the end?
+                    if bit < width {
+                        values.push(ctx.zero(width - bit));
+                    }
+                    debug_assert!(values.len() > 1);
+
+                    // the values are in the wrong order, so we need to reverse them
+                    let out = values
+                        .into_iter()
+                        .rev()
+                        .reduce(|a, b| ctx.concat(a, b))
+                        .unwrap();
+                    Some(out)
+                }
             }
         }
         Lits::None => {
@@ -150,6 +257,8 @@ fn simplify_bv_and(ctx: &mut Context, a: ExprRef, b: ExprRef) -> Option<ExprRef>
                 // a & !a -> 0
                 (Expr::BVNot(inner, w), _) if *inner == b => Some(ctx.zero(*w)),
                 (_, Expr::BVNot(inner, w)) if *inner == a => Some(ctx.zero(*w)),
+                // !a & !b -> a | b
+                (Expr::BVNot(a, _), Expr::BVNot(b, _)) => Some(ctx.or(*a, *b)),
                 _ => None,
             }
         }
@@ -184,6 +293,8 @@ fn simplify_bv_or(ctx: &mut Context, a: ExprRef, b: ExprRef) -> Option<ExprRef> 
                 // a | !a -> 1
                 (Expr::BVNot(inner, w), _) if *inner == b => Some(ctx.ones(*w)),
                 (_, Expr::BVNot(inner, w)) if *inner == a => Some(ctx.ones(*w)),
+                // !a | !b -> a & b
+                (Expr::BVNot(a, _), Expr::BVNot(b, _)) => Some(ctx.and(*a, *b)),
                 _ => None,
             }
         }
@@ -240,7 +351,8 @@ fn simplify_bv_zero_ext(ctx: &mut Context, e: ExprRef, by: WidthInt) -> Option<E
         match ctx.get(e) {
             // zero extend constant
             Expr::BVLiteral(value) => Some(ctx.bv_lit(&value.get(ctx).zero_extend(by))),
-            _ => None,
+            // normalize to concat(${by}'d0, e);
+            _ => Some(ctx.build(|c| c.concat(c.zero(by), e))),
         }
     }
 }
@@ -251,21 +363,114 @@ fn simplify_bv_sign_ext(ctx: &mut Context, e: ExprRef, by: WidthInt) -> Option<E
     } else {
         match ctx.get(e) {
             Expr::BVLiteral(value) => Some(ctx.bv_lit(&value.get(ctx).sign_extend(by))),
+            Expr::BVSignExt {
+                e: inner_e,
+                by: inner_by,
+                ..
+            } => Some(ctx.sign_extend(*inner_e, by + inner_by)),
             _ => None,
         }
     }
 }
 
+fn simplify_bv_concat(ctx: &mut Context, a: ExprRef, b: ExprRef) -> Option<ExprRef> {
+    match (ctx.get(a).clone(), ctx.get(b).clone()) {
+        // normalize concat to be right recursive
+        (Expr::BVConcat(a_a, a_b, _), _) => Some(ctx.build(|c| c.concat(a_a, c.concat(a_b, b)))),
+        (Expr::BVLiteral(va), Expr::BVLiteral(vb)) => {
+            Some(ctx.bv_lit(&va.get(ctx).concat(&vb.get(ctx))))
+        }
+        (Expr::BVLiteral(va), Expr::BVConcat(b_a, b_b, _)) => {
+            if let Expr::BVLiteral(v_b_a) = *ctx.get(b_a) {
+                let lit = ctx.bv_lit(&va.get(ctx).concat(&v_b_a.get(ctx)));
+                Some(ctx.concat(lit, b_b))
+            } else {
+                None
+            }
+        }
+        (
+            Expr::BVSlice {
+                e: a,
+                hi: hi_a,
+                lo: lo_a,
+            },
+            Expr::BVSlice {
+                e: b,
+                hi: hi_b,
+                lo: lo_b,
+            },
+        ) => {
+            // slice of the same thing + adjacent
+            if a == b && lo_a == hi_b + 1 {
+                Some(ctx.slice(a, hi_a, lo_b))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn simplify_bv_slice(ctx: &mut Context, e: ExprRef, hi: WidthInt, lo: WidthInt) -> Option<ExprRef> {
-    match ctx.get(e) {
+    debug_assert!(hi >= lo);
+    match ctx.get(e).clone() {
         // combine slices
         Expr::BVSlice {
             lo: inner_lo,
             e: inner_e,
             ..
-        } => Some(ctx.slice(*inner_e, hi + inner_lo, lo + inner_lo)),
+        } => Some(ctx.slice(inner_e, hi + inner_lo, lo + inner_lo)),
         // slice constant
         Expr::BVLiteral(value) => Some(ctx.bv_lit(&value.get(ctx).slice(hi, lo))),
+        // slice concat
+        Expr::BVConcat(a, b, _) => {
+            let b_width = b.get_bv_type(ctx).unwrap();
+            if hi < b_width {
+                // the slice only includes b
+                Some(ctx.slice(b, hi, lo))
+            } else if lo >= b_width {
+                // the slice only includes a
+                Some(ctx.slice(a, hi - b_width, lo - b_width))
+            } else {
+                // both a and b are included
+                let a_slice = ctx.slice(a, hi - b_width, 0);
+                let b_slice = ctx.slice(b, b_width - 1, lo);
+                Some(ctx.concat(a_slice, b_slice))
+            }
+        }
+        // slice of sign extend
+        Expr::BVSignExt { e, .. } => {
+            let e_width = e.get_bv_type(ctx).unwrap();
+            if hi < e_width {
+                Some(ctx.slice(e, hi, lo))
+            } else {
+                let inner = ctx.slice(e, e_width - 1, lo);
+                Some(ctx.sign_extend(inner, hi - e_width + 1))
+            }
+        }
+        // slice of ite
+        Expr::BVIte { cond, tru, fals } => {
+            Some(ctx.build(|c| c.bv_ite(cond, c.slice(tru, hi, lo), c.slice(fals, hi, lo))))
+        }
+        // slice of not
+        Expr::BVNot(e, _) => Some(ctx.build(|c| c.not(c.slice(e, hi, lo)))),
+        // slice of neg
+        Expr::BVNegate(e, _) if lo == 0 => Some(ctx.build(|c| c.negate(c.slice(e, hi, lo)))),
+        // slice of bit-wise ops
+        Expr::BVAnd(a, b, _) => Some(ctx.build(|c| c.and(c.slice(a, hi, lo), c.slice(b, hi, lo)))),
+        Expr::BVOr(a, b, _) => Some(ctx.build(|c| c.or(c.slice(a, hi, lo), c.slice(b, hi, lo)))),
+        Expr::BVXor(a, b, _) => Some(ctx.build(|c| c.xor(c.slice(a, hi, lo), c.slice(b, hi, lo)))),
+        // these ops have information flow from low to high bits
+        Expr::BVAdd(a, b, _) if lo == 0 => {
+            Some(ctx.build(|c| c.add(c.slice(a, hi, lo), c.slice(b, hi, lo))))
+        }
+        Expr::BVSub(a, b, _) if lo == 0 => {
+            Some(ctx.build(|c| c.sub(c.slice(a, hi, lo), c.slice(b, hi, lo))))
+        }
+        Expr::BVMul(a, b, _) if lo == 0 => {
+            Some(ctx.build(|c| c.mul(c.slice(a, hi, lo), c.slice(b, hi, lo))))
+        }
+
         _ => None,
     }
 }

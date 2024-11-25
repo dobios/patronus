@@ -110,8 +110,11 @@ pub fn gen_condition1(w_max: u32) -> String {
             }
         }
     }
+    
     // TODO: Construct the training data using the LUT and a predefined set of boolean features
-    todo!();
+    let cond = fit_decision_classifier(&lut);
+    
+    cond
 }
 
 // Generates condition 1 as an artih expression
@@ -194,9 +197,10 @@ pub fn check(ctx: &mut Context, lhs: ExprRef, rhs: ExprRef) -> Option<bool> {
     Some(resp == Response::Unsat)
 }
 
+
 // Given the LUT, fit the data in a DecisionClassifier
 // TODO: the return value of this function should be a string of the final formula
-pub fn fit_decision_classifier<'a>(lut: &'a Vec<(ConditionParam, bool)>) {
+pub fn fit_decision_classifier<'a>(lut: &'a Vec<(ConditionParam, bool)>) -> String{
     
     let mut features = Vec::with_capacity(lut.len());
     let mut labels = Vec::with_capacity(lut.len());
@@ -244,6 +248,12 @@ pub fn fit_decision_classifier<'a>(lut: &'a Vec<(ConditionParam, bool)>) {
 
     println!("Trained decision tree accuracy:\n{:?}", accuracy);
     println!("Model:\n{:?}", model);
+
+    // TODO: build a string-formatted condition based on the model
+    // for now return dummy string
+    let output = String::from("condition");
+    output
+    
 }
 
 // Given a single ConditionParam from the LUT, generates the boolean features

@@ -3,7 +3,8 @@
 // author: Kevin Laeufer <laeufer@cornell.edu>
 
 use crate::expr::*;
-use egg::Language;
+use clap::builder::Str;
+use egg::{Language, Symbol};
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 
@@ -98,7 +99,28 @@ impl egg::FromOp for Arith {
     type Error = ();
 
     fn from_op(op: &str, _children: Vec<egg::Id>) -> Result<Self, Self::Error> {
-        todo!("from_op({op})")
+        let binop: Option<BinOp> = match op {
+            "+" => Some(BinOp::Add),
+            "-" => Some(BinOp::Sub),
+            "*" => Some(BinOp::Mul),
+            "<<" => Some(BinOp::LeftShift),
+            ">>" => Some(BinOp::RightShift),
+            ">>>" => Some(BinOp::ArithmeticRightShift),
+            _ => None,
+        };
+        let children = _children.try_into()
+            .unwrap_or_else(
+                |v: Vec<egg::Id>| 
+                    panic!("Expected a Vec of length 2 but it was {}", v.len()));
+        let a = match binop {
+            Some(bop) => Arith::BinOp(
+                children,
+                bop,
+                0, 0, false, 0, false
+            ),
+            _ => panic!("Invalid op name: {}", op)
+        };
+        todo!()
     }
 }
 

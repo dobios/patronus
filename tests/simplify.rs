@@ -32,6 +32,9 @@ fn test_simplify_and() {
     ts("and(a : bv<3>, 3'b000)", "3'b000");
     ts("and(a : bv<1>, not(a))", "false");
     ts("and(not(a : bv<1>), a)", "false");
+
+    // de morgan
+    ts("and(not(a:bv<3>), not(b:bv<3>))", "or(a:bv<3>, b:bv<3>)")
 }
 
 #[test]
@@ -44,6 +47,9 @@ fn test_simplify_or() {
     ts("or(a : bv<3>, 3'b000)", "a : bv<3>");
     ts("or(a : bv<1>, not(a))", "true");
     ts("or(not(a : bv<1>), a)", "true");
+
+    // de morgan
+    ts("or(not(a:bv<3>), not(b:bv<3>))", "and(a:bv<3>, b:bv<3>)")
 }
 
 #[test]
@@ -67,17 +73,22 @@ fn test_simplify_not() {
 }
 
 #[test]
-fn test_simplify_zext() {
+fn test_simplify_zero_extend() {
     ts("zext(false, 1)", "2'b00");
     ts("zext(true, 1)", "2'b01");
     ts("zext(true, 0)", "true");
+    // zero extends always get normalized to a concat with zero
+    ts("zext(a: bv<2>, 4)", "concat(4'd0, a: bv<2>)");
+    ts("zext(zext(a: bv<2>, 4), 3)", "concat(7'd0, a: bv<2>)");
 }
 
 #[test]
-fn test_simplify_sext() {
+fn test_simplify_sign_extend() {
     ts("sext(false, 1)", "2'b00");
     ts("sext(true, 1)", "2'b11");
     ts("sext(true, 0)", "true");
+    // combine sign extensions
+    ts("sext(sext(a: bv<2>, 4), 3)", "sext(a : bv<2>, 7)");
 }
 
 #[test]
@@ -94,6 +105,12 @@ fn test_simplify_ite() {
     ts("ite(c : bv<1>, true, true)", "true");
     ts("ite(c : bv<1>, false, true)", "not(c : bv<1>)");
     ts("ite(c : bv<1>, false, false)", "false");
+
+    // one value is a boolean constant
+    ts("ite(c:bv<1>, true, b:bv<1>)", "or(c:bv<1>, b:bv<1>)");
+    ts("ite(c:bv<1>, false, b:bv<1>)", "and(not(c:bv<1>), b:bv<1>)");
+    ts("ite(c:bv<1>, a:bv<1>, false)", "and(c:bv<1>, a:bv<1>)");
+    ts("ite(c:bv<1>, a:bv<1>, true)", "or(not(c:bv<1>), a:bv<1>)");
 }
 
 #[test]
@@ -126,6 +143,13 @@ fn test_simplify_shift_left() {
     );
     ts("shift_left(a : bv<3>, 3'd2)", "concat(a : bv<3>[0], 2'b00)");
     ts("shift_left(a : bv<3>, 3'd3)", "3'b000");
+
+    // more shift by constant tests
+    ts("shift_left(a:bv<32>, 32'd0)", "a : bv<32>");
+    ts(
+        "shift_left(a:bv<32>, 32'd4)",
+        "concat(a:bv<32>[27:0], 4'd0)",
+    );
 }
 
 #[test]
@@ -138,9 +162,19 @@ fn test_simplify_shift_right() {
 
     // shift by a constant
     ts("shift_right(a : bv<3>, 3'd0)", "a : bv<3>");
-    ts("shift_right(a : bv<3>, 3'd1)", "zext(a : bv<3>[2:1], 1)");
-    ts("shift_right(a : bv<3>, 3'd2)", "zext(a : bv<3>[2], 2)");
+    ts(
+        "shift_right(a : bv<3>, 3'd1)",
+        "concat(1'd0, a : bv<3>[2:1])",
+    );
+    ts("shift_right(a : bv<3>, 3'd2)", "concat(2'd0, a : bv<3>[2])");
     ts("shift_right(a : bv<3>, 3'd3)", "3'b000");
+
+    // more shift by constant tests
+    ts("shift_right(a:bv<32>, 32'd0)", "a : bv<32>");
+    ts(
+        "shift_right(a:bv<32>, 32'd4)",
+        "concat(4'd0, a:bv<32>[31:4])",
+    );
 }
 
 #[test]
@@ -201,3 +235,237 @@ fn test_simplify_mul() {
     ts("mul(a : bv<4>, 4'd4)", "concat(a : bv<4>[1:0], 2'b00)");
     ts("mul(a : bv<4>, 4'd8)", "concat(a : bv<4>[0],  3'b000)");
 }
+
+#[test]
+fn test_simplify_concat() {
+    // normalize concats
+    ts(
+        "concat(concat(a : bv<1>, b:bv<1>), c:bv<1>)",
+        "concat(a : bv<1>, concat(b:bv<1>, c:bv<1>))",
+    );
+
+    // concat constants
+    ts("concat(3'b110, 2'b01)", "5'b11001");
+    ts("concat(3'b110, concat(false, true))", "5'b11001");
+    ts("concat(concat(3'b110, false), true)", "5'b11001");
+
+    // concat constants in the presence of other expressions
+    ts(
+        "concat(a : bv<3>, concat(false, true))",
+        "concat(a:bv<3>, 2'b01)",
+    );
+    ts(
+        "concat(concat(a : bv<3>, false), true)",
+        "concat(a:bv<3>, 2'b01)",
+    );
+    ts(
+        "concat(true, concat(false, a : bv<3>))",
+        "concat(2'b10, a:bv<3>)",
+    );
+    ts(
+        "concat(concat(true, false), a : bv<3>)",
+        "concat(2'b10, a:bv<3>)",
+    );
+    ts(
+        "concat(3'b101, concat(true, concat(false, a : bv<3>)))",
+        "concat(5'b10110, a:bv<3>)",
+    );
+}
+
+// from maltese-smt:
+// https://github.com/ucb-bar/maltese-smt/blob/main/test/maltese/smt/SMTSimplifierSpec.scala
+#[test]
+fn test_simplify_bool_equality() {
+    ts("eq(b : bv<1>, true)", "b : bv<1>");
+    ts("eq(b : bv<1>, false)", "not(b : bv<1>)");
+    ts("eq(false, b : bv<1>)", "not(b : bv<1>)");
+}
+
+// from maltese-smt
+#[test]
+fn test_simplify_comparison_to_concat() {
+    // eq over concat should be split up
+    ts(
+        "eq(c:bv<5>, concat(a:bv<2>, b:bv<3>))",
+        "and(eq(a:bv<2>, c:bv<5>[4:3]), eq(b:bv<3>,c[2:0]))",
+    );
+    ts(
+        "eq(concat(a:bv<2>, b:bv<3>), c:bv<5>)",
+        "and(eq(a:bv<2>, c:bv<5>[4:3]), eq(b:bv<3>,c[2:0]))",
+    );
+
+    // now with nested concats
+    ts(
+        "eq(c:bv<5>, concat(concat(a1:bv<1>, a0:bv<1>), b: bv<3>))",
+        "and(eq(a1:bv<1>, c:bv<5>[4]), and(eq(a0:bv<1>, c[3]), eq(b:bv<3>, c[2:0])))",
+    );
+}
+
+#[test]
+fn test_simplify_comparison_to_zero_extend() {
+    // all of this is solved by a combination of simplifying:
+    //  - comparison to concat
+    //  - pushing slice into concat
+    //  - normalizing zero extend as concat with zeros
+    ts("eq(4'd0, zext(a:bv<5>, 4)[8:5])", "true");
+    ts("eq(4'd1, zext(a:bv<5>, 4)[8:5])", "false");
+    ts("eq(2'b10, zext(a:bv<1>, 1))", "false");
+    ts("eq(concat(4'd0, a:bv<5>), zext(a:bv<5>, 4))", "true");
+}
+
+// from maltese-smt
+#[test]
+fn test_simplify_bit_masks() {
+    ts(
+        "and(concat(a: bv<2>, b: bv<3>), 5'b11000)",
+        "concat(a:bv<2>, 3'd0)",
+    );
+    ts(
+        "and(concat(a: bv<2>, b: bv<3>), 5'b10000)",
+        "concat(a:bv<2>[1], 4'd0)",
+    );
+    ts(
+        "and(concat(a: bv<2>, b: bv<3>), 5'b01000)",
+        "concat(1'd0, concat(a:bv<2>[0], 3'd0))",
+    );
+    ts(
+        "and(concat(a: bv<2>, b: bv<3>), 5'b00100)",
+        "concat(2'd0, concat(b:bv<3>[2], 2'd0))",
+    );
+    ts(
+        "and(concat(a: bv<2>, b: bv<3>), 5'b00010)",
+        "concat(3'd0, concat(b:bv<3>[1], 1'd0))",
+    );
+    ts(
+        "and(concat(a: bv<2>, b: bv<3>), 5'b00001)",
+        "concat(4'd0, b:bv<3>[0])",
+    );
+}
+
+// from maltese-smt
+#[test]
+fn test_simplify_slice_on_sign_extension() {
+    // sext is essentially like a concat, and thus we want to push the slice into it
+    ts("sext(a:bv<4>, 2)[3:0]", "a:bv<4>");
+    ts("sext(a:bv<4>, 2)[3:1]", "a:bv<4>[3:1]");
+    ts("sext(a:bv<4>, 2)[2:1]", "a:bv<4>[2:1]");
+    ts("sext(a:bv<4>, 2)[4:0]", "sext(a:bv<4>, 1)");
+    ts("sext(a:bv<4>, 2)[5:0]", "sext(a:bv<4>, 2)");
+    ts("sext(a:bv<4>, 2)[4:1]", "sext(a:bv<4>[3:1], 1)");
+}
+
+#[test]
+fn test_push_slice_into_concat() {
+    // slice on a concat should become part of that concat
+    ts(
+        "concat(a:bv<3>, b:bv<2>)[3:0]",
+        "concat(a:bv<3>[1:0], b:bv<2>)",
+    );
+    ts(
+        "concat(a:bv<3>, b:bv<2>)[3:1]",
+        "concat(a:bv<3>[1:0], b:bv<2>[1])",
+    );
+    ts("concat(a:bv<3>, b:bv<2>)[3:2]", "a:bv<3>[1:0]");
+    ts("concat(a:bv<3>, b:bv<2>)[1:0]", "b:bv<2>");
+    ts("concat(a:bv<3>, b:bv<2>)[1]", "b:bv<2>[1]");
+
+    // non-overlapping slice of 2-concat
+    ts("concat(3'b011, a : bv<2>)[4:2]", "3'b011");
+    ts("concat(3'b011, a : bv<2>)[4:3]", "2'b01");
+    ts("concat(3'b011, a : bv<2>)[1:0]", "a : bv<2>");
+    ts("concat(3'b011, a : bv<2>)[1]", "a : bv<2>[1]");
+
+    // overlapping slice of 2-concat
+    ts("concat(3'b011, a : bv<2>)[4:0]", "concat(3'b011, a:bv<2>)");
+    ts(
+        "concat(3'b011, a : bv<2>)[4:1]",
+        "concat(3'b011, a:bv<2>[1])",
+    );
+    ts("concat(3'b011, a : bv<2>)[3:0]", "concat(2'b11, a:bv<2>)");
+
+    // non-overlapping slice of 3-concat
+    ts("concat(concat(a:bv<2>, 3'b011), b : bv<2>)[6:5]", "a:bv<2>");
+    ts("concat(a:bv<2>, concat(3'b011, b : bv<2>))[6:5]", "a:bv<2>");
+    ts("concat(concat(a:bv<2>, 3'b011), b : bv<2>)[4:2]", "3'b011");
+    ts("concat(a:bv<2>, concat(3'b011, b : bv<2>))[4:2]", "3'b011");
+    ts("concat(concat(a:bv<2>, 3'b011), b : bv<2>)[1:0]", "b:bv<2>");
+    ts("concat(a:bv<2>, concat(3'b011, b : bv<2>))[1:0]", "b:bv<2>");
+
+    // overlapping slice of 3-concat
+    ts(
+        "concat(concat(a:bv<2>, 3'b011), b : bv<2>)[6:2]",
+        "concat(a:bv<2>, 3'b011)",
+    );
+    ts(
+        "concat(a:bv<2>, concat(3'b011, b : bv<2>))[6:2]",
+        "concat(a:bv<2>, 3'b011)",
+    );
+    ts(
+        "concat(concat(a:bv<2>, 3'b011), b : bv<2>)[6:3]",
+        "concat(a:bv<2>, 2'b01)",
+    );
+    ts(
+        "concat(a:bv<2>, concat(3'b011, b : bv<2>))[6:3]",
+        "concat(a:bv<2>, 2'b01)",
+    );
+    ts(
+        "concat(concat(a:bv<2>, 3'b011), b : bv<2>)[5:2]",
+        "concat(a:bv<2>[0], 3'b011)",
+    );
+    ts(
+        "concat(a:bv<2>, concat(3'b011, b : bv<2>))[5:2]",
+        "concat(a:bv<2>[0], 3'b011)",
+    );
+}
+
+#[test]
+fn test_slice_of_ite() {
+    ts(
+        "ite(c:bv<1>, a:bv<4>, b:bv<4>)[0]",
+        "ite(c:bv<1>, a:bv<4>[0], b:bv<4>[0])",
+    );
+}
+
+#[test]
+fn test_simplify_concat_of_adjacent_slices() {
+    ts("concat(a:bv<32>[20:19], a[18:0])", "a:bv<32>[20:0]");
+    ts("concat(a:bv<32>[31:19], a[18:0])", "a:bv<32>");
+}
+
+#[test]
+fn test_simplify_slice_of_op() {
+    // push into not
+    ts("not(a:bv<32>)[20:1]", "not(a:bv<32>[20:1])");
+    ts("not(a:bv<32>)[15:0]", "not(a:bv<32>[15:0])");
+
+    // push slice into neg, which we can only for msbs
+    ts("neg(a:bv<32>)[20:1]", "neg(a:bv<32>)[20:1]");
+    ts("neg(a:bv<32>)[15:0]", "neg(a:bv<32>[15:0])");
+
+    // push into bit-wise and arithmetic binary ops
+    for op in ["and", "or", "xor", "add", "sub", "mul"] {
+        ts(
+            &format!("{op}(a:bv<32>, b:bv<32>)[30:0]"),
+            &format!("{op}(a:bv<32>[30:0], b:bv<32>[30:0])"),
+        );
+        if op == "and" || op == "or" || op == "xor" {
+            ts(
+                &format!("{op}(a:bv<32>, b:bv<32>)[30:2]"),
+                &format!("{op}(a:bv<32>[30:2], b:bv<32>[30:2])"),
+            );
+        } else {
+            ts(
+                &format!("{op}(a:bv<32>, b:bv<32>)[30:2]"),
+                &format!("{op}(a:bv<32>, b:bv<32>)[30:2]"),
+            );
+        }
+
+        // examples that show up in actual code
+        ts(
+            &format!("{op}(zext(a:bv<32>, 1), zext(b:bv<32>, 1))[31:0]"),
+            &format!("{op}(a:bv<32>, b:bv<32>)"),
+        );
+    }
+}
+
+// TODO: add missing literals simplifications: https://github.com/ekiwi/maltese-private/blob/main/test/maltese/smt/SMTSimplifierLiteralsSpec.scala

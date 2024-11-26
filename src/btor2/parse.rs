@@ -7,9 +7,10 @@ use crate::system::transform::do_transform;
 use crate::system::*;
 use baa::{BitVecValue, WidthInt};
 use fuzzy_matcher::FuzzyMatcher;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::str::FromStr;
 
 pub fn parse_str(ctx: &mut Context, input: &str, name: Option<&str>) -> Option<TransitionSystem> {
     match Parser::new(ctx).parse(input.as_bytes(), name) {
@@ -55,17 +56,22 @@ struct Parser<'a> {
     /// offset of the current line inside the file
     offset: usize,
     /// maps file id to type
-    type_map: HashMap<LineId, Type>,
+    type_map: FxHashMap<LineId, Type>,
     /// maps file id to state in the Transition System
-    state_map: HashMap<LineId, StateRef>,
+    state_map: FxHashMap<LineId, StateRef>,
     /// maps file id to signal in the Transition System
-    signal_map: HashMap<LineId, ExprRef>,
+    signal_map: FxHashMap<LineId, ExprRef>,
+    /// keeps track of names in order to uniquify them
+    unique_names: FxHashSet<String>,
 }
 
 type LineId = u32;
 
 pub const DEFAULT_INPUT_PREFIX: &str = "_input";
 pub const DEFAULT_STATE_PREFIX: &str = "_state";
+pub const DEFAULT_OUTPUT_PREFIX: &str = "_output";
+pub const DEFAULT_BAD_STATE_PREFIX: &str = "_bad";
+pub const DEFAULT_CONSTRAINT_PREFIX: &str = "_constraint";
 
 impl<'a> Parser<'a> {
     fn new(ctx: &'a mut Context) -> Self {
@@ -74,9 +80,10 @@ impl<'a> Parser<'a> {
             sys: TransitionSystem::new("".to_string()),
             errors: Errors::new(),
             offset: 0,
-            type_map: HashMap::new(),
-            state_map: HashMap::new(),
-            signal_map: HashMap::new(),
+            type_map: FxHashMap::default(),
+            state_map: FxHashMap::default(),
+            signal_map: FxHashMap::default(),
+            unique_names: FxHashSet::default(),
         }
     }
 
@@ -86,8 +93,17 @@ impl<'a> Parser<'a> {
         backup_name: Option<&str>,
     ) -> Result<TransitionSystem, Errors> {
         // ensure that default input and state names are reserved in order to get nicer names
-        self.ctx.string(DEFAULT_INPUT_PREFIX.into());
-        self.ctx.string(DEFAULT_STATE_PREFIX.into());
+        self.unique_names = FxHashSet::from_iter(
+            [
+                DEFAULT_CONSTRAINT_PREFIX,
+                DEFAULT_OUTPUT_PREFIX,
+                DEFAULT_BAD_STATE_PREFIX,
+                DEFAULT_INPUT_PREFIX,
+                DEFAULT_STATE_PREFIX,
+            ]
+            .into_iter()
+            .map(|s| s.to_string()),
+        );
 
         for line_res in input.lines() {
             let line = line_res.expect("failed to read line");
@@ -108,17 +124,14 @@ impl<'a> Parser<'a> {
         improve_state_names(self.ctx, &mut self.sys);
 
         // demote states without next or init to input
-        let input_states = self
-            .sys
-            .states()
-            .rev() // this reverse is needed in order to properly remove elements from back to front
-            .filter(|(_, s)| s.init.is_none() && s.next.is_none())
-            .map(|(i, _)| i)
-            .collect::<Vec<_>>();
-        for state_id in input_states {
-            let st = self.sys.remove_state(state_id);
-            self.sys.add_input(self.ctx, st.symbol);
+        for state in self.sys.states.iter() {
+            if state.init.is_none() && state.next.is_none() {
+                self.sys.inputs.push(state.symbol);
+            }
         }
+        self.sys
+            .states
+            .retain(|s| s.next.is_some() || s.init.is_some());
 
         // check to see if we encountered any errors
         if self.errors.is_empty() {
@@ -152,7 +165,6 @@ impl<'a> Parser<'a> {
         };
 
         // check op
-        let mut labels = SignalLabels::default();
         let expr = if UNARY_OPS_SET.contains(op) {
             Some(self.parse_unary_op(line, tokens)?)
         } else if BINARY_OPS_SET.contains(op) {
@@ -185,8 +197,29 @@ impl<'a> Parser<'a> {
                     None
                 }
                 "output" | "bad" | "constraint" | "fair" => {
-                    labels = SignalLabels::from_str(op).unwrap();
-                    Some((self.get_expr_from_line_id(line, tokens[2])?, 3))
+                    let expr = self.get_expr_from_line_id(line, tokens[2])?;
+                    let name = match op {
+                        "output" => {
+                            let name = self.get_label_name(&cont, DEFAULT_OUTPUT_PREFIX);
+                            self.sys.outputs.push(Output { name, expr });
+                            name
+                        }
+                        "bad" => {
+                            self.sys.bad_states.push(expr);
+                            self.get_label_name(&cont, DEFAULT_BAD_STATE_PREFIX)
+                        }
+                        "constraint" => {
+                            self.sys.constraints.push(expr);
+                            self.get_label_name(&cont, DEFAULT_CONSTRAINT_PREFIX)
+                        }
+                        "fair" => todo!("support fairness constraints"),
+                        _ => unreachable!(),
+                    };
+
+                    // we add the name here directly to avoid calling add_unique_str twice
+                    self.sys.names[expr] = Some(name);
+
+                    None
                 }
                 other => {
                     if OTHER_OPS_SET.contains(other) {
@@ -204,22 +237,30 @@ impl<'a> Parser<'a> {
                 None => None,
                 Some(name) => {
                     if include_name(name) {
-                        Some(self.ctx.add_unique_str(&clean_up_name(name)))
+                        Some(self.add_unique_str(&clean_up_name(name)))
                     } else {
                         None
                     }
                 }
             };
-            // inputs and states do not get here
-            let kind = SignalKind::Node;
-            let merged = match self.sys.get_signal(e) {
-                Some(info) => merge_signal_info(info, &SignalInfo { name, kind, labels }),
-                None => SignalInfo { name, kind, labels },
-            };
-            self.sys
-                .add_signal(e, merged.kind, merged.labels, merged.name);
+            // add name if available
+            if let Some(name) = name {
+                self.sys.names[e] = Some(name);
+            }
         }
         Ok(())
+    }
+
+    fn add_unique_str(&mut self, start: &str) -> StringRef {
+        let mut count: usize = 0;
+        let mut name = start.to_string();
+        while self.unique_names.contains(&name) {
+            name = format!("{start}_{count}");
+            count += 1;
+        }
+        let id = self.ctx.string(Cow::Borrowed(&name));
+        self.unique_names.insert(name);
+        id
     }
 
     fn check_expr_type(
@@ -265,7 +306,7 @@ impl<'a> Parser<'a> {
 
         let base_str: &str = cont.tokens.get(3).unwrap_or(&default);
         // TODO: look into comment for better names
-        self.ctx.add_unique_str(base_str)
+        self.add_unique_str(base_str)
     }
 
     fn parse_unary_op(&mut self, line: &str, tokens: &[&str]) -> ParseLineResult<(ExprRef, usize)> {
@@ -566,7 +607,8 @@ impl<'a> Parser<'a> {
             "consth" => self.parse_bv_lit_str(line, tokens[3], 16, width),
             other => panic!("Did not expect {other} as a possible format op!"),
         }?;
-        Ok((res, 3))
+        let tokens = if op.starts_with("const") { 4 } else { 3 };
+        Ok((res, tokens))
     }
 
     fn parse_bv_lit_str(
@@ -789,15 +831,13 @@ fn include_name(name: &str) -> bool {
 /// for these nodes and tries to rename the states.
 fn improve_state_names(ctx: &mut Context, sys: &mut TransitionSystem) {
     let mut renames = HashMap::new();
-    for (_, state) in sys.states() {
+    for state in sys.states.iter() {
         // since the alias signal refers to the same expression as the state symbol,
         // it will generate a signal info with the better name
-        if let Some(signal) = sys.get_signal(state.symbol) {
-            if let Some(name_ref) = signal.name {
-                let old_name_ref = ctx.get(state.symbol).get_symbol_name_ref().unwrap();
-                if old_name_ref != name_ref {
-                    renames.insert(state.symbol, name_ref);
-                }
+        if let Some(name_ref) = sys.names[state.symbol] {
+            let old_name_ref = ctx.get(state.symbol).get_symbol_name_ref().unwrap();
+            if old_name_ref != name_ref {
+                renames.insert(state.symbol, name_ref);
             }
         }
     }

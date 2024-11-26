@@ -8,49 +8,71 @@
 
 use super::ExprRef;
 use baa::Word;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::Debug;
-use std::ops::Index;
+use std::ops::{Index, IndexMut};
 
-pub trait ExprMetaData<T>: Debug + Clone + Index<ExprRef, Output = T>
+pub trait ExprMap<T>:
+    Debug + Clone + Index<ExprRef, Output = T> + IndexMut<ExprRef, Output = T>
 where
-    T: Default + Clone,
+    T: Default + Clone + PartialEq,
 {
     fn iter<'a>(&'a self) -> impl Iterator<Item = (ExprRef, &'a T)>
     where
         T: 'a;
 
-    fn insert(&mut self, e: ExprRef, data: T);
+    fn non_default_value_keys(&self) -> impl Iterator<Item = ExprRef>;
 }
 
-pub fn extract_fixed_point(data: &impl ExprMetaData<Option<ExprRef>>, mut key: ExprRef) -> ExprRef {
-    // TODO: actually update data in order to speed up future lookups, similar to union find
-    loop {
-        let value = data[key].unwrap();
-        if value == key {
-            return value;
-        }
-        key = value;
+/// finds the fixed point value and updates values it discovers along the way
+pub fn get_fixed_point<T: ExprMap<Option<ExprRef>>>(m: &mut T, key: ExprRef) -> Option<ExprRef> {
+    // fast path without updating any pointers
+    if key == m[key]? {
+        return Some(key);
     }
+
+    // pointer chasing, similar to union find, but not the asymptotically fast path halving version
+    let mut value = key;
+    while value != m[value]? {
+        value = m[value]?;
+    }
+    // update pointers
+    let final_value = value;
+    value = key;
+    while value != final_value {
+        let next = m[value]?;
+        m[value] = Some(final_value);
+        value = next;
+    }
+    Some(value)
 }
 
 /// A sparse hash map to stare meta-data related to each expression
 #[derive(Debug, Default, Clone)]
-pub struct SparseExprMetaData<T: Default + Clone + Debug> {
+pub struct SparseExprMap<T: Default + Clone + Debug> {
     inner: FxHashMap<ExprRef, T>,
     // we need actual storage so that we can return a reference
     default: T,
 }
 
-impl<T: Default + Clone + Debug> Index<ExprRef> for SparseExprMetaData<T> {
+impl<T: Default + Clone + Debug> Index<ExprRef> for SparseExprMap<T> {
     type Output = T;
 
+    #[inline]
     fn index(&self, e: ExprRef) -> &Self::Output {
         self.inner.get(&e).unwrap_or(&self.default)
     }
 }
 
-impl<T: Default + Clone + Debug> ExprMetaData<T> for SparseExprMetaData<T> {
+impl<T: Default + Clone + Debug> IndexMut<ExprRef> for SparseExprMap<T> {
+    #[inline]
+    fn index_mut(&mut self, e: ExprRef) -> &mut Self::Output {
+        self.inner.entry(e).or_insert(T::default())
+    }
+}
+
+impl<T: Default + Clone + Debug + PartialEq> ExprMap<T> for SparseExprMap<T> {
+    #[inline]
     fn iter<'a>(&'a self) -> impl Iterator<Item = (ExprRef, &'a T)>
     where
         T: 'a,
@@ -58,8 +80,12 @@ impl<T: Default + Clone + Debug> ExprMetaData<T> for SparseExprMetaData<T> {
         self.inner.iter().map(|(k, v)| (*k, v))
     }
 
-    fn insert(&mut self, e: ExprRef, data: T) {
-        self.inner.insert(e, data);
+    #[inline]
+    fn non_default_value_keys(&self) -> impl Iterator<Item = ExprRef> {
+        self.inner
+            .iter()
+            .filter(|(_, v)| **v != T::default())
+            .map(|(k, _)| *k)
     }
 }
 
@@ -72,6 +98,7 @@ pub struct DenseExprMetaData<T: Default + Clone + Debug> {
 }
 
 impl<T: Default + Clone + Debug> DenseExprMetaData<T> {
+    #[inline]
     pub fn into_vec(self) -> Vec<T> {
         self.inner
     }
@@ -80,12 +107,24 @@ impl<T: Default + Clone + Debug> DenseExprMetaData<T> {
 impl<T: Default + Clone + Debug> Index<ExprRef> for DenseExprMetaData<T> {
     type Output = T;
 
+    #[inline]
     fn index(&self, e: ExprRef) -> &Self::Output {
         self.inner.get(e.index()).unwrap_or(&self.default)
     }
 }
 
-impl<T: Default + Clone + Debug> ExprMetaData<T> for DenseExprMetaData<T> {
+impl<T: Default + Clone + Debug> IndexMut<ExprRef> for DenseExprMetaData<T> {
+    #[inline]
+    fn index_mut(&mut self, e: ExprRef) -> &mut Self::Output {
+        if self.inner.len() <= e.index() {
+            self.inner.resize(e.index() + 1, T::default());
+        }
+        &mut self.inner[e.index()]
+    }
+}
+
+impl<T: Default + Clone + Debug + PartialEq> ExprMap<T> for DenseExprMetaData<T> {
+    #[inline]
     fn iter<'a>(&'a self) -> impl Iterator<Item = (ExprRef, &'a T)>
     where
         T: 'a,
@@ -96,13 +135,10 @@ impl<T: Default + Clone + Debug> ExprMetaData<T> for DenseExprMetaData<T> {
         }
     }
 
-    fn insert(&mut self, e: ExprRef, data: T) {
-        if self.inner.len() <= e.index() {
-            self.inner.resize(e.index(), T::default());
-            self.inner.push(data);
-        } else {
-            self.inner[e.index()] = data;
-        }
+    fn non_default_value_keys(&self) -> impl Iterator<Item = ExprRef> {
+        self.iter()
+            .filter(|(_, v)| **v != T::default())
+            .map(|(k, _)| k)
     }
 }
 
@@ -114,6 +150,7 @@ struct ExprMetaDataIter<'a, T> {
 impl<'a, T> Iterator for ExprMetaDataIter<'a, T> {
     type Item = (ExprRef, &'a T);
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         match self.inner.next() {
             None => None,
@@ -126,12 +163,48 @@ impl<'a, T> Iterator for ExprMetaDataIter<'a, T> {
     }
 }
 
-/// A dense hash map to store boolean meta-data related to each expression
+pub trait ExprSet {
+    fn contains(&self, value: &ExprRef) -> bool;
+    fn insert(&mut self, value: ExprRef) -> bool;
+    fn remove(&mut self, value: &ExprRef) -> bool;
+}
+
+/// A dense  map to store boolean meta-data related to each expression
 #[derive(Debug, Default, Clone)]
-pub struct DenseExprMetaDataBool {
+pub struct DenseExprSet {
     inner: Vec<u64>,
 }
 
+impl ExprSet for DenseExprSet {
+    fn contains(&self, value: &ExprRef) -> bool {
+        let (word_idx, bit) = index_to_word_and_bit(*value);
+        let word = self.inner.get(word_idx).cloned().unwrap_or_default();
+        ((word >> bit) & 1) == 1
+    }
+
+    fn insert(&mut self, value: ExprRef) -> bool {
+        let (word_idx, bit) = index_to_word_and_bit(value);
+        if self.inner.len() <= word_idx {
+            self.inner.resize(word_idx + 1, 0);
+        }
+        let bit_was_set = ((self.inner[word_idx] >> bit) & 1) == 1;
+        self.inner[word_idx] |= 1u64 << bit;
+        !bit_was_set
+    }
+
+    fn remove(&mut self, value: &ExprRef) -> bool {
+        let (word_idx, bit) = index_to_word_and_bit(*value);
+        if self.inner.len() <= word_idx {
+            false
+        } else {
+            let bit_was_set = ((self.inner[word_idx] >> bit) & 1) == 1;
+            self.inner[word_idx] &= !(1u64 << bit);
+            bit_was_set
+        }
+    }
+}
+
+#[inline]
 fn index_to_word_and_bit(index: ExprRef) -> (usize, u32) {
     let index = index.index();
     let word = index / Word::BITS as usize;
@@ -139,75 +212,53 @@ fn index_to_word_and_bit(index: ExprRef) -> (usize, u32) {
     (word, bit as u32)
 }
 
-impl Index<ExprRef> for DenseExprMetaDataBool {
-    type Output = bool;
+/// A dense hash map to store boolean meta-data related to each expression
+#[derive(Debug, Default, Clone)]
+pub struct SparseExprSet {
+    inner: FxHashSet<ExprRef>,
+}
 
-    fn index(&self, index: ExprRef) -> &Self::Output {
-        let (word_idx, bit) = index_to_word_and_bit(index);
-        let word = self.inner.get(word_idx).cloned().unwrap_or_default();
-        if ((word >> bit) & 1) == 1 {
-            &TRU
-        } else {
-            &FALS
-        }
+impl ExprSet for SparseExprSet {
+    fn contains(&self, value: &ExprRef) -> bool {
+        self.inner.contains(value)
+    }
+
+    fn insert(&mut self, value: ExprRef) -> bool {
+        self.inner.insert(value)
+    }
+
+    fn remove(&mut self, value: &ExprRef) -> bool {
+        self.inner.remove(value)
     }
 }
 
-impl ExprMetaData<bool> for DenseExprMetaDataBool {
-    fn iter<'a>(&'a self) -> impl Iterator<Item = (ExprRef, &'a bool)>
-    where
-        bool: 'a,
-    {
-        ExprMetaBoolIter {
-            inner: self.inner.iter(),
-            value: 0,
-            index: 0,
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_fixed_point() {
+        let mut m = DenseExprMetaData::default();
+        let zero = ExprRef::from_index(0);
+        let one = ExprRef::from_index(1);
+        let two = ExprRef::from_index(2);
+        m[zero] = Some(one);
+        m[one] = Some(two);
+        m[two] = Some(two);
+
+        assert_eq!(get_fixed_point(&mut m, two), Some(two));
+        assert_eq!(get_fixed_point(&mut m, one), Some(two));
+        assert_eq!(get_fixed_point(&mut m, zero), Some(two));
+        // our current implementation updates the whole path
+        assert_eq!(m[zero], Some(two));
+        assert_eq!(m[one], Some(two));
     }
 
-    fn insert(&mut self, e: ExprRef, data: bool) {
-        let (word_idx, bit) = index_to_word_and_bit(e);
-        if self.inner.len() <= word_idx {
-            self.inner.resize(e.index(), 0);
-        }
-        if data {
-            // set bit
-            self.inner[word_idx] |= 1u64 << bit;
-        } else {
-            // clear bit
-            self.inner[word_idx] &= !(1u64 << bit);
-        }
+    #[test]
+    fn test_dense_bool() {
+        let mut m = DenseExprSet::default();
+        assert!(!m.contains(&ExprRef::from_index(7)));
+        m.insert(ExprRef::from_index(7));
+        assert!(m.contains(&ExprRef::from_index(7)));
     }
 }
-
-struct ExprMetaBoolIter<'a> {
-    inner: std::slice::Iter<'a, u64>,
-    value: u64,
-    index: usize,
-}
-
-impl<'a> Iterator for ExprMetaBoolIter<'a> {
-    type Item = (ExprRef, &'a bool);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index % u64::BITS as usize == 0 {
-            match self.inner.next() {
-                None => return None,
-                Some(value) => {
-                    self.value = *value;
-                }
-            }
-        }
-        let index_ref = ExprRef::from_index(self.index);
-        self.index += 1;
-        let bit = self.index / u64::BITS as usize;
-        if ((self.value >> bit) & 1) == 1 {
-            Some((index_ref, &TRU))
-        } else {
-            Some((index_ref, &FALS))
-        }
-    }
-}
-
-const TRU: bool = true;
-const FALS: bool = false;

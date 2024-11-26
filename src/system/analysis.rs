@@ -3,10 +3,9 @@
 // released under BSD 3-Clause License
 // author: Kevin Laeufer <laeufer@cornell.edu>
 
-use super::{SignalInfo, SignalKind, State, TransitionSystem};
-use crate::expr::{
-    Context, DenseExprMetaData, DenseExprMetaDataBool, ExprMetaData, ExprRef, ForEachChild,
-};
+use super::{State, TransitionSystem};
+use crate::expr::*;
+use rustc_hash::FxHashSet;
 
 pub type UseCountInt = u16;
 
@@ -21,14 +20,11 @@ fn internal_count_expr_uses(
 ) -> Vec<UseCountInt> {
     let mut use_count: DenseExprMetaData<UseCountInt> = DenseExprMetaData::default();
     let states = sys.state_map();
-    let mut todo = Vec::from_iter(
-        sys.get_signals(is_usage_root_signal)
-            .iter()
-            .map(|(e, _)| *e),
-    );
+    // all observable outputs are our roots
+    let mut todo = sys.get_assert_assume_output_exprs();
     // ensure that all roots start with count 1
     for expr in todo.iter() {
-        use_count.insert(*expr, 1);
+        use_count[*expr] = 1;
     }
 
     while let Some(expr) = todo.pop() {
@@ -38,7 +34,7 @@ fn internal_count_expr_uses(
                 if !ignore_init {
                     let count = use_count[init];
                     if count == 0 {
-                        use_count.insert(init, 1);
+                        use_count[init] = 1;
                         todo.push(init);
                     }
                 }
@@ -46,7 +42,7 @@ fn internal_count_expr_uses(
             if let Some(next) = state.next {
                 let count = use_count[next];
                 if count == 0 {
-                    use_count.insert(next, 1);
+                    use_count[next] = 1;
                     todo.push(next);
                 }
             }
@@ -92,18 +88,19 @@ fn cone_of_influence_impl(
 ) -> Vec<ExprRef> {
     let mut out = vec![];
     let mut todo = vec![root];
-    let mut visited = DenseExprMetaDataBool::default();
+    let mut visited = DenseExprSet::default();
     let states = sys.state_map();
+    let inputs = sys.input_set();
 
     while let Some(expr_ref) = todo.pop() {
-        if visited[expr_ref] {
+        if visited.contains(&expr_ref) {
             continue;
         }
 
         // make sure children are visited
         let expr = ctx.get(expr_ref);
         expr.for_each_child(|c| {
-            if !visited[*c] {
+            if !visited.contains(c) {
                 todo.push(*c);
             }
         });
@@ -112,14 +109,14 @@ fn cone_of_influence_impl(
         if let Some(state) = states.get(&expr_ref) {
             if follow_init {
                 if let Some(c) = state.init {
-                    if !visited[c] {
+                    if !visited.contains(&c) {
                         todo.push(c);
                     }
                 }
             }
             if follow_next {
                 if let Some(c) = state.next {
-                    if !visited[c] {
+                    if !visited.contains(&c) {
                         todo.push(c);
                     }
                 }
@@ -127,61 +124,43 @@ fn cone_of_influence_impl(
         }
 
         // check to see if this is a state or input
-        if expr.is_symbol() {
-            let is_state_or_input = sys
-                .get_signal(expr_ref)
-                .map(|i| i.is_input() || i.is_state())
-                .unwrap_or(false);
-            if is_state_or_input {
-                out.push(expr_ref);
-            }
+        if expr.is_symbol() && (states.contains_key(&expr_ref) || inputs.contains(&expr_ref)) {
+            out.push(expr_ref);
         }
-        visited.insert(expr_ref, true);
+        visited.insert(expr_ref);
     }
 
     out
 }
 
-/// Returns whether a signal is always "used", i.e. visible to the outside world or not.
-pub fn is_usage_root_signal(info: &SignalInfo) -> bool {
-    info.labels.is_output()
-        || info.labels.is_constraint()
-        || info.labels.is_bad()
-        || info.labels.is_fair()
-}
-
-pub fn is_non_output_root_signal(info: &SignalInfo) -> bool {
-    info.labels.is_constraint() || info.labels.is_bad() || info.labels.is_fair()
-}
-
 /// Counts how often expressions are used. This version _does not_ follow any state symbols.
-fn simple_count_expr_uses(ctx: &Context, roots: Vec<ExprRef>) -> Vec<UseCountInt> {
-    let mut use_count = DenseExprMetaData::default();
+fn simple_count_expr_uses(ctx: &Context, roots: Vec<ExprRef>) -> impl ExprMap<UseCountInt> {
+    let mut use_count = SparseExprMap::default();
     let mut todo = roots;
 
     // ensure that all roots start with count 1
     for expr in todo.iter() {
-        use_count.insert(*expr, 1);
+        use_count[*expr] = 1;
     }
 
     while let Some(expr) = todo.pop() {
         count_uses(ctx, expr, &mut use_count, &mut todo);
     }
 
-    use_count.into_vec()
+    use_count
 }
 
 #[inline]
 fn count_uses(
     ctx: &Context,
     expr: ExprRef,
-    use_count: &mut DenseExprMetaData<UseCountInt>,
+    use_count: &mut impl ExprMap<UseCountInt>,
     todo: &mut Vec<ExprRef>,
 ) {
     ctx.get(expr).for_each_child(|child| {
         let count = use_count[*child];
         let is_first_use = count == 0;
-        use_count.insert(*child, count + 1);
+        use_count[*child] = count.saturating_add(1);
         if is_first_use {
             todo.push(*child);
         }
@@ -192,14 +171,70 @@ fn count_uses(
 pub struct RootInfo {
     pub expr: ExprRef,
     pub uses: Uses,
+    pub kind: SerializeSignalKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SerializeSignalKind {
+    BadState,
+    Constraint,
+    Output,
+    Input,
+    StateInit,
+    StateNext,
+    None,
 }
 
 /// Indicates which context an expression is used in.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub struct Uses {
-    pub next: bool,
-    pub init: bool,
-    pub other: bool,
+    pub next: UseCountInt,
+    pub init: UseCountInt,
+    pub other: UseCountInt,
+}
+
+impl Uses {
+    #[inline]
+    pub fn is_used(&self) -> bool {
+        self.total() > 0
+    }
+    #[inline]
+    pub fn total(&self) -> UseCountInt {
+        self.next
+            .saturating_add(self.init)
+            .saturating_add(self.other)
+    }
+}
+
+/// analyzes expression uses to determine in what contexts the expression is used.
+fn determine_simples_uses(
+    ctx: &Context,
+    sys: &TransitionSystem,
+    include_output: bool,
+) -> impl ExprMap<Uses> {
+    let init = simple_count_expr_uses(ctx, sys.get_init_exprs());
+    let next = simple_count_expr_uses(ctx, sys.get_next_exprs());
+    let other = if include_output {
+        simple_count_expr_uses(ctx, sys.get_assert_assume_output_exprs())
+    } else {
+        simple_count_expr_uses(ctx, sys.get_assert_assume_exprs())
+    };
+
+    // collect all expressions
+    let mut all_expr = FxHashSet::from_iter(other.non_default_value_keys());
+    all_expr.extend(init.non_default_value_keys());
+    all_expr.extend(next.non_default_value_keys());
+
+    // generate combined map
+    let mut out = SparseExprMap::default();
+    for expr in all_expr.into_iter() {
+        out[expr] = Uses {
+            next: next[expr],
+            init: init[expr],
+            other: other[expr],
+        };
+    }
+    out
 }
 
 /// Meta-data that helps with serialization, no matter if serializing to btor, our custom
@@ -214,45 +249,59 @@ pub fn analyze_for_serialization(
     sys: &TransitionSystem,
     include_outputs: bool,
 ) -> SerializeMeta {
-    // first we identify which expressions are used for init and which are used for next
-    let (init_count, next_count, mut other_count) = init_counts(ctx, sys, include_outputs);
+    let uses = determine_simples_uses(ctx, sys, include_outputs);
 
-    let mut visited = DenseExprMetaDataBool::default();
+    // always add all inputs first to the signal order
     let mut signal_order = Vec::new();
-
-    // add all inputs
-    for (input, _) in sys.get_signals(|s| s.kind == SignalKind::Input) {
-        visited.insert(input, true);
-        let (uses, _) = analyze_use(input, &init_count, &next_count, &other_count);
-        signal_order.push(RootInfo { expr: input, uses });
+    for &input in sys.inputs.iter() {
+        signal_order.push(RootInfo {
+            expr: input,
+            uses: uses[input],
+            kind: SerializeSignalKind::Input,
+        });
     }
 
-    // add all roots to todo list
-    let mut todo = Vec::new();
-    let filter = if include_outputs {
-        is_usage_root_signal
-    } else {
-        is_non_output_root_signal
-    };
-    for (expr, _) in sys.get_signals(filter) {
-        todo.push(expr);
-        other_count[expr.index()] = 100; // ensure that this expression will always be serialized
+    // keep track of which signals have been processed
+    let mut visited = DenseExprSet::default();
+
+    // add all roots and give them a large other count
+    let mut todo: Vec<(ExprRef, SerializeSignalKind)> = vec![];
+    if include_outputs {
+        todo.extend(
+            sys.outputs
+                .iter()
+                .map(|o| (o.expr, SerializeSignalKind::Output)),
+        );
     }
-    for (_, state) in sys.states() {
-        if let Some(expr) = state.next {
-            todo.push(expr);
-        }
-        if let Some(expr) = state.init {
-            todo.push(expr);
-        }
-    }
+    todo.extend(
+        sys.constraints
+            .iter()
+            .map(|&e| (e, SerializeSignalKind::Constraint)),
+    );
+    todo.extend(
+        sys.bad_states
+            .iter()
+            .map(|&e| (e, SerializeSignalKind::BadState)),
+    );
+
+    // add state root expressions
+    todo.extend(
+        sys.get_init_exprs()
+            .iter()
+            .map(|&e| (e, SerializeSignalKind::StateInit)),
+    );
+    todo.extend(
+        sys.get_next_exprs()
+            .iter()
+            .map(|&e| (e, SerializeSignalKind::StateNext)),
+    );
 
     // visit roots in the order in which they were declared
     todo.reverse();
 
     // visit expressions
-    while let Some(expr_ref) = todo.pop() {
-        if visited[expr_ref] {
+    while let Some((expr_ref, kind)) = todo.pop() {
+        if visited.contains(&expr_ref) {
             continue;
         }
 
@@ -262,13 +311,13 @@ pub fn analyze_for_serialization(
         let mut all_done = true;
         let mut num_children = 0;
         expr.for_each_child(|c| {
-            if !visited[*c] {
+            if !visited.contains(c) {
                 if all_done {
-                    todo.push(expr_ref); // return expression to the todo list
+                    todo.push((expr_ref, kind)); // return expression to the todo list
                 }
                 all_done = false;
                 // we need to visit the child first
-                todo.push(*c);
+                todo.push((*c, SerializeSignalKind::None));
             }
             num_children += 1;
         });
@@ -278,84 +327,37 @@ pub fn analyze_for_serialization(
         }
 
         // add to signal order if applicable
-        if num_children > 0
-            || sys
-                .get_signal(expr_ref)
-                .map(|i| !i.labels.is_none())
-                .unwrap_or(false)
-        {
-            let (uses, total_use) = analyze_use(expr_ref, &init_count, &next_count, &other_count);
-            if total_use > 1 {
+        let is_output_like = matches!(
+            kind,
+            SerializeSignalKind::Output
+                | SerializeSignalKind::Constraint
+                | SerializeSignalKind::BadState
+        );
+        let is_input = kind == SerializeSignalKind::Input;
+        if num_children > 0 || is_output_like || is_input {
+            let expr_uses = uses[expr_ref];
+            let used_multiple_times = uses[expr_ref].total() > 1;
+            if is_output_like || used_multiple_times {
                 signal_order.push(RootInfo {
                     expr: expr_ref,
-                    uses,
+                    uses: expr_uses,
+                    kind,
                 });
             }
         }
-        visited.insert(expr_ref, true);
+        visited.insert(expr_ref);
     }
 
     SerializeMeta { signal_order }
 }
 
-fn analyze_use(
-    expr_ref: ExprRef,
-    init_count: &[UseCountInt],
-    next_count: &[UseCountInt],
-    other_count: &[UseCountInt],
-) -> (Uses, UseCountInt) {
-    let ii = expr_ref.index();
-    let init = *init_count.get(ii).unwrap_or(&0);
-    let next = *next_count.get(ii).unwrap_or(&0);
-    let other = *other_count.get(ii).unwrap_or(&0);
-    let total = init + next + other;
-    (
-        Uses {
-            init: init > 0,
-            next: next > 0,
-            other: other > 0,
-        },
-        total,
-    )
-}
-
-fn init_counts(
-    ctx: &Context,
-    sys: &TransitionSystem,
-    include_outputs: bool,
-) -> (Vec<UseCountInt>, Vec<UseCountInt>, Vec<UseCountInt>) {
-    let mut init_roots = Vec::new();
-    let mut next_roots = Vec::new();
-    for (_, state) in sys.states() {
-        if let Some(next) = state.next {
-            next_roots.push(next);
-        }
-        if let Some(init) = state.init {
-            init_roots.push(init);
-        }
-    }
-
-    let filter = if include_outputs {
-        is_usage_root_signal
-    } else {
-        is_non_output_root_signal
-    };
-    let other_roots = Vec::from_iter(sys.get_signals(filter).iter().map(|(e, _)| *e));
-
-    let init_count = simple_count_expr_uses(ctx, init_roots);
-    let next_count = simple_count_expr_uses(ctx, next_roots);
-    let other_count = simple_count_expr_uses(ctx, other_roots);
-
-    (init_count, next_count, other_count)
-}
-
 impl ForEachChild<ExprRef> for State {
     fn for_each_child(&self, mut visitor: impl FnMut(&ExprRef)) {
         if let Some(next) = &self.next {
-            (visitor)(next);
+            visitor(next);
         }
         if let Some(init) = &self.init {
-            (visitor)(init);
+            visitor(init);
         }
     }
 

@@ -1,6 +1,6 @@
 [package]
 name = "patronus"
-version = "0.23.0"
+version = "0.24.0"
 edition = "2021"
 authors = ["Kevin Laeufer <laeufer@berkeley.edu>"]
 description = "Hardware bug-finding toolkit."
@@ -20,8 +20,8 @@ easy-smt = "0.2.1"
 # used for simulator initialization
 rand = { version = "0.8.5", default-features = false }
 rand_xoshiro = "0.6.0"
-smallvec = "1.11.2"
-baa = "0.14.4"
+smallvec = { version = "1.x", features = ["union"] }
+baa = "0.14.5"
 boolean_expression = "0.4.4"
 egg = "0.9.5"
 rustc-hash = "2.0.0"

@@ -67,12 +67,12 @@ pub fn gen_condition1(w_max: u32) -> String {
     let mut lut: Vec<(ConditionParam, bool)> = Vec::new();
 
     // Loop over all inputs and concretize the values
-    for wr in 0..w_max {
-        for wa in 0..w_max {
-            for wb in 0..w_max {
-                for wc in 0..w_max {
-                    for wbc in 0..w_max {
-                        for wab in 0..w_max {
+    for wr in 1..w_max {
+        for wa in 1..w_max {
+            for wb in 1..w_max {
+                for wc in 1..w_max {
+                    for wbc in 1..w_max {
+                        for wab in 1..w_max {
                             for sa in 0..1 {
                                 for sb in 0..1 {
                                     for sc in 0..1 {
@@ -128,6 +128,9 @@ pub fn check_cond1(
 ) -> Option<bool> { 
     // Encode rewrite rule
     let mut ctx = Context::default();
+    println!("**********************");
+    println!("{}", wa);
+    println!("**********************");
     let a = ctx.bv_symbol("A", wa);
     let b = ctx.bv_symbol("B", wb);
     let c = ctx.bv_symbol("C", wc);
@@ -305,4 +308,15 @@ pub fn gen_boolean_features(param: &ConditionParam) -> Vec<(String, bool)> {
     }
 
     feature_list
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shift_rewrite() {
+        let resString = gen_condition1(2);
+        println!("{}", resString);
+    }
 }

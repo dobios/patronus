@@ -29,9 +29,9 @@ pub fn convert_expr(
     // replace expressions on the flow (generally in order to inject a symbol or change a symbol name)
     let expr_ref = (patch_expr)(&expr_ref_in).unwrap_or_else(|| expr_ref_in);
 
-    match ctx.get(expr_ref) {
+    match &ctx[expr_ref] {
         Expr::BVSymbol { name, .. } => {
-            let name_str = ctx.get_str(*name);
+            let name_str = &ctx[*name];
             smt_ctx.atom(escape_smt_identifier(name_str))
         }
         Expr::BVLiteral(value) => {
@@ -220,7 +220,7 @@ pub fn convert_expr(
             let f = convert_expr(smt_ctx, ctx, *fals, patch_expr);
             smt_ctx.ite(c, t, f)
         }
-        Expr::ArraySymbol { name, .. } => smt_ctx.atom(escape_smt_identifier(ctx.get_str(*name))),
+        Expr::ArraySymbol { name, .. } => smt_ctx.atom(escape_smt_identifier(&ctx[*name])),
         Expr::ArrayConstant {
             e,
             index_width,

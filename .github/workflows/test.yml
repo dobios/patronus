@@ -6,11 +6,13 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  BITWUZLA_VERSION: 0.6.1
+  YICES_VERSION: 2.6.5
 
 jobs:
   tests:
     name: Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     strategy:
       matrix:
@@ -20,7 +22,7 @@ jobs:
     steps:
     - name: Update Rust to ${{ matrix.toolchain }}
       run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Build
       run: cargo build --verbose
     - name: Run tests
@@ -28,8 +30,8 @@ jobs:
 
   bmc:
     name: Test BMC Example
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
       matrix:
         toolchain:
@@ -39,12 +41,61 @@ jobs:
           - yices2
 
     steps:
-      - uses: YosysHQ/setup-oss-cad-suite@v2
+      - name: Cache Yices
+        id: cache-yices
+        uses: actions/cache@v3
+        if: ${{ matrix.solver == 'yices2' }}
         with:
-          version: '2023-11-15'
+          key: yices-${{ runner.os }}-${{ env.YICES_VERSION }}
+          path: /tmp/yices2
+      - name: Download Yices2
+        if: ${{ matrix.solver == 'yices2' && steps.cache-yices.outputs.cache-hit != 'true' }}
+        run: |
+          mkdir /tmp/yices2
+          cd /tmp/yices2
+          wget -q https://yices.csl.sri.com/releases/${{ env.YICES_VERSION }}/yices-${{ env.YICES_VERSION }}-x86_64-pc-linux-gnu-static-gmp.tar.gz -O yices.tar.gz
+          tar -xf yices.tar.gz
+          mv yices-*/* .
+      - name: Add Yices to Path
+        if: ${{ matrix.solver == 'yices2' }}
+        run: echo "/tmp/yices2/bin" >> "$GITHUB_PATH"
+      - name: Cache Bitwuzla
+        id: cache-bitwuzla
+        uses: actions/cache@v3
+        if: ${{ matrix.solver == 'bitwuzla' }}
+        with:
+          key: bitwuzla-${{ runner.os }}-${{ env.BITWUZLA_VERSION }}
+          path: /tmp/bitwuzla
+      - name: Install Meson for Bitwuzla
+        if: ${{ matrix.solver == 'bitwuzla' }}
+        run: sudo apt-get install -y meson
+      - name: Download and Compile Bitwuzla
+        if: ${{ matrix.solver == 'bitwuzla' && steps.cache-bitwuzla.outputs.cache-hit != 'true'  }}
+        run: |
+          mkdir /tmp/bitwuzla
+          cd /tmp/bitwuzla
+          wget -q https://github.com/bitwuzla/bitwuzla/archive/refs/tags/${{ env.BITWUZLA_VERSION }}.zip -O bitwuzla.zip
+          unzip -q bitwuzla.zip
+          mv bitwuzla-*/* .
+          ./configure.py
+          cd build
+          ninja
+      - name: Install Bitwuzla
+        if: ${{ matrix.solver == 'bitwuzla' }}
+        run: cd /tmp/bitwuzla/build && sudo ninja install
+      - name: Install btor sim
+        run: |
+          mkdir /tmp/btor
+          cd /tmp/btor
+          git clone https://github.com/hwmcc/btor2tools.git
+          cd btor2tools
+          ./configure.sh
+          cd build
+          make
+          echo "/tmp/btor/btor2tools/build/bin/" >> "$GITHUB_PATH"
       - name: Update Rust to ${{ matrix.toolchain }}
         run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Build
         run: cargo build --verbose --examples --release
       - name: bmc Quiz1
@@ -76,7 +127,7 @@ jobs:
 
   sim:
     name: Test SIM Example
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     strategy:
       matrix:
@@ -86,7 +137,7 @@ jobs:
     steps:
       - name: Update Rust to ${{ matrix.toolchain }}
         run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Build
         run: cargo build --verbose --examples --release
       - name: simulate mux
@@ -136,18 +187,18 @@ jobs:
 
   semver:
     name: Check Semantic Versioning
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: obi1kenobi/cargo-semver-checks-action@v2
 
   format:
     name: Check Formatting
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - run: cargo fmt --check

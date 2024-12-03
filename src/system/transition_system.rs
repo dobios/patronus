@@ -76,17 +76,17 @@ impl TransitionSystem {
     }
 
     pub fn add_input(&mut self, ctx: &Context, symbol: ExprRef) {
-        assert!(ctx.get(symbol).is_symbol());
-        let name = ctx.get(symbol).get_symbol_name_ref();
+        assert!(ctx[symbol].is_symbol());
+        let name = ctx[symbol].get_symbol_name_ref();
         self.inputs.push(symbol);
         self.names[symbol] = name;
     }
 
     pub fn add_state(&mut self, ctx: &Context, state: impl Into<State>) -> StateRef {
         let state = state.into();
-        assert!(ctx.get(state.symbol).is_symbol());
+        assert!(ctx[state.symbol].is_symbol());
         // also add as a signal
-        let name = ctx.get(state.symbol).get_symbol_name_ref();
+        let name = ctx[state.symbol].get_symbol_name_ref();
         self.names[state.symbol] = name;
         let id = self.states.len();
         self.states.push(state);
@@ -195,5 +195,49 @@ impl TransitionSystem {
         }
 
         out
+    }
+
+    /// Creates a map from signal name to expression
+    pub fn get_name_map(&self, ctx: &Context) -> FxHashMap<String, ExprRef> {
+        let mut m = FxHashMap::default();
+        for out in self.outputs.iter() {
+            m.insert(ctx[out.name].to_string(), out.expr);
+        }
+        for &e in self
+            .bad_states
+            .iter()
+            .chain(self.constraints.iter())
+            .chain(self.inputs.iter())
+            .chain(self.states.iter().map(|s| &s.symbol))
+        {
+            if let Some(name) = ctx[e].get_symbol_name(ctx) {
+                m.insert(name.to_string(), e);
+            }
+            if let Some(name) = self.names[e] {
+                m.insert(ctx[name].to_string(), e);
+            }
+        }
+        m
+    }
+
+    /// Returns input by name.
+    pub fn lookup_input(&self, ctx: &Context, name: &str) -> Option<ExprRef> {
+        self.inputs
+            .iter()
+            .find(|&&i| {
+                ctx[i]
+                    .get_symbol_name(ctx)
+                    .map(|i_name| i_name == name)
+                    .unwrap_or(false)
+            })
+            .cloned()
+    }
+
+    /// Returns output by name.
+    pub fn lookup_output(&self, ctx: &Context, name: &str) -> Option<ExprRef> {
+        self.outputs
+            .iter()
+            .find(|&&o| ctx[o.name] == name)
+            .map(|o| o.expr)
     }
 }

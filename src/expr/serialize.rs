@@ -1,6 +1,7 @@
-// Copyright 2023 The Regents of the University of California
+// Copyright 2023-2024 The Regents of the University of California
+// Copyright 2024 Cornell University
 // released under BSD 3-Clause License
-// author: Kevin Laeufer <laeufer@berkeley.edu>
+// author: Kevin Laeufer <laeufer@cornell.edu>
 
 use super::Type;
 use super::{Context, Expr, ExprRef};
@@ -38,7 +39,7 @@ where
     W: Write,
 {
     match expr {
-        Expr::BVSymbol { name, .. } => write!(writer, "{}", ctx.get_str(*name)),
+        Expr::BVSymbol { name, .. } => write!(writer, "{}", ctx[*name]),
         Expr::BVLiteral(value) => {
             if value.width() <= 8 {
                 write!(writer, "{}'b{}", value.width(), value.get(ctx).to_bit_str())
@@ -342,7 +343,7 @@ where
             }
             write!(writer, ")")
         }
-        Expr::ArraySymbol { name, .. } => write!(writer, "{}", ctx.get_str(*name)),
+        Expr::ArraySymbol { name, .. } => write!(writer, "{}", ctx[*name]),
         Expr::ArrayConstant { e, index_width, .. } => {
             write!(writer, "([")?;
             if (serialize_child)(e, writer)? {
@@ -405,12 +406,12 @@ where
     F: Fn(&ExprRef, &mut W) -> std::io::Result<bool>,
     W: Write,
 {
-    serialize_expr(ctx.get(*expr), ctx, writer, serialize_child)
+    serialize_expr(&ctx[*expr], ctx, writer, serialize_child)
 }
 
 impl SerializableIrNode for ExprRef {
     fn serialize<W: Write>(&self, ctx: &Context, writer: &mut W) -> std::io::Result<()> {
-        ctx.get(*self).serialize(ctx, writer)
+        ctx[*self].serialize(ctx, writer)
     }
 }
 

@@ -18,13 +18,15 @@ use std::collections::HashSet;
 pub struct SmtSolverCmd {
     pub name: &'static str,
     pub args: &'static [&'static str],
+    pub options: &'static [&'static str],
     pub supports_uf: bool,
     pub supports_check_assuming: bool,
 }
 
 pub const BITWUZLA_CMD: SmtSolverCmd = SmtSolverCmd {
     name: "bitwuzla",
-    args: &["--smt2", "--incremental"],
+    args: &[],
+    options: &["incremental"],
     supports_uf: false,
     supports_check_assuming: true,
 };
@@ -32,6 +34,7 @@ pub const BITWUZLA_CMD: SmtSolverCmd = SmtSolverCmd {
 pub const YICES2_CMD: SmtSolverCmd = SmtSolverCmd {
     name: "yices-smt2",
     args: &["--incremental"],
+    options: &[],
     supports_uf: false, // actually true, but ignoring for now
     supports_check_assuming: false,
 };
@@ -74,6 +77,11 @@ impl SmtModelChecker {
             .solver(self.solver.name, self.solver.args)
             .replay_file(replay_file)
             .build()?;
+
+        // older versions of bitwuzla need incremental to be set with an option
+        for opt in self.solver.options.iter() {
+            smt_ctx.set_option(format!(":{}", *opt), smt_ctx.true_())?;
+        }
 
         // z3 only supports the non-standard as-const array syntax when the logic is set to ALL
         let logic = if self.solver.name == "z3" {
@@ -368,7 +376,7 @@ impl UnrollSmtEncoding {
             let id = (id + signal_order.len()) as u16;
             let info = SmtSignalInfo {
                 id,
-                name: ctx.get(state.symbol).get_symbol_name_ref().unwrap(),
+                name: ctx[state.symbol].get_symbol_name_ref().unwrap(),
                 uses: Uses::default(), // irrelevant
                 is_state: true,
                 is_input: false,
@@ -405,8 +413,8 @@ impl UnrollSmtEncoding {
             let skip = !(filter)(info);
             if !skip {
                 let tpe = convert_tpe(smt_ctx, expr.get_type(ctx));
-                let name = name_at(ctx.get_str(info.name), step);
-                if ctx.get(*expr).is_symbol() {
+                let name = name_at(&ctx[info.name], step);
+                if ctx[*expr].is_symbol() {
                     smt_ctx.declare_const(escape_smt_identifier(&name), tpe)?;
                 } else {
                     let value = self.expr_in_step(ctx, smt_ctx, *expr, step);
@@ -431,7 +439,7 @@ impl UnrollSmtEncoding {
             let name_ref = if info.is_const {
                 info.name
             } else {
-                let name = name_at(ctx.get_str(info.name), step);
+                let name = name_at(&ctx[info.name], step);
                 ctx.string(name.into())
             };
             let tpe = signal.get_type(ctx);
@@ -458,7 +466,7 @@ impl UnrollSmtEncoding {
         expr: ExprRef,
         step: u64,
     ) -> smt::SExpr {
-        let expr_is_symbol = ctx.get(expr).is_symbol();
+        let expr_is_symbol = ctx[expr].is_symbol();
         let patch = |e: &ExprRef| -> Option<ExprRef> {
             // If the expression we are trying to serialize is not a symbol, then wo
             // do not just want to replace it with one, as that would lead us to a tautology!
@@ -532,7 +540,7 @@ impl TransitionSystemEncoding for UnrollSmtEncoding {
 
         // define next state signals for previous state
         self.define_signals(ctx, smt_ctx, prev_step, &|info: &SmtSignalInfo| {
-            info.uses.next > 0 && !info.uses.other > 0 && !info.is_input
+            info.uses.next > 0 && info.uses.other == 0 && !info.is_input
         })?;
 
         // define next state

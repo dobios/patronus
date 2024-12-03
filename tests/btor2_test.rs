@@ -1,6 +1,7 @@
-// Copyright 2023 The Regents of the University of California
+// Copyright 2023-2024 The Regents of the University of California
+// Copyright 2024 Cornell University
 // released under BSD 3-Clause License
-// author: Kevin Laeufer <laeufer@berkeley.edu>
+// author: Kevin Laeufer <laeufer@cornell.edu>
 
 use patronus::btor2;
 use patronus::expr::*;
@@ -32,6 +33,19 @@ fn serialize_count2() {
     let mut ctx = Context::default();
     let sys = btor2::parse_str(&mut ctx, COUNT_2, Some("count2")).unwrap();
     insta::assert_snapshot!(skip_first_line(&btor2::serialize_to_str(&ctx, &sys)));
+}
+
+const PASS_THROUGH: &str = r#"
+1 sort bitvec 1
+2 input 1 i
+3 output 2 o
+"#;
+
+#[test]
+fn serialize_pass_through() {
+    let mut ctx = Context::default();
+    let sys = btor2::parse_str(&mut ctx, PASS_THROUGH, Some("pass")).unwrap();
+    insta::assert_snapshot!(sys.serialize_to_str(&ctx));
 }
 
 #[test]

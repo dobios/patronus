@@ -29,6 +29,14 @@ regex = "1.11.1"
 ndarray = "0.15"
 linfa = "0.7.0"
 linfa-trees = "0.7.0"
+csv = "1.1"
+rustlearn = "0.5.0"
+rustrees = "0.2.4"
+rayon = "1.7.0"
+pyo3-ffi = "0.18.1"
+pyo3 = "0.18.1"
+arrow = "37.0.0"
+permutation = "0.4.1"
 
 [dev-dependencies]
 clap =  { version = "4.4.8", features = ["derive"] }

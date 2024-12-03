@@ -3,4 +3,8 @@
 // author: Kevin Laeufer <laeufer@cornell.edu>
 mod arithmetic;
 pub mod condition_generator;
+mod trees;
+mod dataset;
+mod utils;
+mod split_criteria;
 pub use arithmetic::{from_arith, to_arith, Arith, BinOp};

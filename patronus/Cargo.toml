@@ -1,0 +1,28 @@
+[package]
+name = "patronus"
+version = "0.28.0"
+description = "Hardware bug-finding toolkit."
+homepage = "https://kevinlaeufer.com"
+keywords = ["RTL", "btor", "model-checking", "SMT", "bit-vector"]
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+indexmap = "2.0.0"
+codespan-reporting = "0.11.1"
+fuzzy-matcher = "0.3.7"
+lazy_static = "1.4.0"
+easy-smt.workspace = true
+smallvec = { version = "1.x", features = ["union"] }
+boolean_expression = "0.4.4"
+regex = "1.11.1"
+baa.workspace = true
+rustc-hash.workspace = true
+
+[dev-dependencies]
+insta = { version = "1.x", features = ["yaml"] }
+

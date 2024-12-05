@@ -7,4 +7,4 @@ mod trees;
 mod dataset;
 mod utils;
 mod split_criteria;
-pub use arithmetic::{from_arith, to_arith, Arith, BinOp};
+pub use arithmetic::{from_arith, to_arith, Arith, ArithSymbol};

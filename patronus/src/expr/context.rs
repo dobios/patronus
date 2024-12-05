@@ -203,35 +203,45 @@ impl Context {
         self.fals_expr_ref
     }
 
-    pub fn mask(&mut self, width: WidthInt) -> ExprRef {
-        self.bv_lit(&BitVecValue::ones(width))
-    }
     pub fn one(&mut self, width: WidthInt) -> ExprRef {
         self.bv_lit(&BitVecValue::from_u64(1, width))
     }
     pub fn ones(&mut self, width: WidthInt) -> ExprRef {
         self.bv_lit(&BitVecValue::ones(width))
     }
-    pub fn bv_equal(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
-        self.add_expr(Expr::BVEqual(a, b))
+    pub fn equal(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_type(self), b.get_type(self));
+        if a.get_type(self).is_bit_vector() {
+            self.add_expr(Expr::BVEqual(a, b))
+        } else {
+            self.add_expr(Expr::ArrayEqual(a, b))
+        }
     }
-    pub fn bv_ite(&mut self, cond: ExprRef, tru: ExprRef, fals: ExprRef) -> ExprRef {
-        self.add_expr(Expr::BVIte { cond, tru, fals })
-    }
-    pub fn array_ite(&mut self, cond: ExprRef, tru: ExprRef, fals: ExprRef) -> ExprRef {
-        self.add_expr(Expr::ArrayIte { cond, tru, fals })
+    pub fn ite(&mut self, cond: ExprRef, tru: ExprRef, fals: ExprRef) -> ExprRef {
+        debug_assert_eq!(cond.get_bv_type(self).unwrap(), 1);
+        debug_assert_eq!(tru.get_type(self), fals.get_type(self));
+        if tru.get_type(self).is_bit_vector() {
+            self.add_expr(Expr::BVIte { cond, tru, fals })
+        } else {
+            self.add_expr(Expr::ArrayIte { cond, tru, fals })
+        }
     }
     pub fn implies(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), 1);
+        debug_assert_eq!(b.get_bv_type(self).unwrap(), 1);
         self.add_expr(Expr::BVImplies(a, b))
     }
     pub fn greater_signed(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVGreaterSigned(a, b, b.get_bv_type(self).unwrap()))
     }
 
     pub fn greater(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVGreater(a, b))
     }
     pub fn greater_or_equal_signed(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVGreaterEqualSigned(
             a,
             b,
@@ -240,27 +250,35 @@ impl Context {
     }
 
     pub fn greater_or_equal(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVGreaterEqual(a, b))
     }
     pub fn not(&mut self, e: ExprRef) -> ExprRef {
+        debug_assert!(e.get_type(self).is_bit_vector());
         self.add_expr(Expr::BVNot(e, e.get_bv_type(self).unwrap()))
     }
     pub fn negate(&mut self, e: ExprRef) -> ExprRef {
+        debug_assert!(e.get_type(self).is_bit_vector());
         self.add_expr(Expr::BVNegate(e, e.get_bv_type(self).unwrap()))
     }
     pub fn and(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVAnd(a, b, b.get_bv_type(self).unwrap()))
     }
     pub fn or(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVOr(a, b, b.get_bv_type(self).unwrap()))
     }
     pub fn xor(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVXor(a, b, b.get_bv_type(self).unwrap()))
     }
     pub fn shift_left(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVShiftLeft(a, b, b.get_bv_type(self).unwrap()))
     }
     pub fn arithmetic_shift_right(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVArithmeticShiftRight(
             a,
             b,
@@ -268,33 +286,44 @@ impl Context {
         ))
     }
     pub fn shift_right(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVShiftRight(a, b, b.get_bv_type(self).unwrap()))
     }
     pub fn add(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVAdd(a, b, b.get_bv_type(self).unwrap()))
     }
     pub fn sub(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVSub(a, b, b.get_bv_type(self).unwrap()))
     }
     pub fn mul(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVMul(a, b, b.get_bv_type(self).unwrap()))
     }
     pub fn div(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVUnsignedDiv(a, b, b.get_bv_type(self).unwrap()))
     }
     pub fn signed_div(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVSignedDiv(a, b, b.get_bv_type(self).unwrap()))
     }
     pub fn signed_mod(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVSignedMod(a, b, b.get_bv_type(self).unwrap()))
     }
     pub fn signed_remainder(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVSignedRem(a, b, b.get_bv_type(self).unwrap()))
     }
     pub fn remainder(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert_eq!(a.get_bv_type(self).unwrap(), b.get_bv_type(self).unwrap());
         self.add_expr(Expr::BVUnsignedRem(a, b, b.get_bv_type(self).unwrap()))
     }
     pub fn concat(&mut self, a: ExprRef, b: ExprRef) -> ExprRef {
+        debug_assert!(a.get_type(self).is_bit_vector());
+        debug_assert!(b.get_type(self).is_bit_vector());
         let width = a.get_bv_type(self).unwrap() + b.get_bv_type(self).unwrap();
         self.add_expr(Expr::BVConcat(a, b, width))
     }
@@ -325,6 +354,15 @@ impl Context {
     pub fn apply_sign(&mut self, e:ExprRef, by: WidthInt, s: bool) -> ExprRef {
         if s { self.sign_extend(e, by) } 
         else { self.zero_extend(e, by) }
+    }
+
+    /// Sign or zero extends depending on the value of `signed`.
+    pub fn extend(&mut self, e: ExprRef, by: WidthInt, signed: bool) -> ExprRef {
+        if signed {
+            self.sign_extend(e, by)
+        } else {
+            self.zero_extend(e, by)
+        }
     }
 
     pub fn array_store(&mut self, array: ExprRef, index: ExprRef, data: ExprRef) -> ExprRef {
@@ -399,23 +437,17 @@ impl<'a> Builder<'a> {
         self.ctx.borrow_mut().zero_array(tpe)
     }
 
-    pub fn mask(&self, width: WidthInt) -> ExprRef {
-        self.ctx.borrow_mut().mask(width)
-    }
     pub fn one(&self, width: WidthInt) -> ExprRef {
         self.ctx.borrow_mut().one(width)
     }
     pub fn ones(&self, width: WidthInt) -> ExprRef {
         self.ctx.borrow_mut().ones(width)
     }
-    pub fn bv_equal(&self, a: ExprRef, b: ExprRef) -> ExprRef {
-        self.ctx.borrow_mut().bv_equal(a, b)
+    pub fn equal(&self, a: ExprRef, b: ExprRef) -> ExprRef {
+        self.ctx.borrow_mut().equal(a, b)
     }
-    pub fn bv_ite(&self, cond: ExprRef, tru: ExprRef, fals: ExprRef) -> ExprRef {
-        self.ctx.borrow_mut().bv_ite(cond, tru, fals)
-    }
-    pub fn array_ite(&self, cond: ExprRef, tru: ExprRef, fals: ExprRef) -> ExprRef {
-        self.ctx.borrow_mut().array_ite(cond, tru, fals)
+    pub fn ite(&self, cond: ExprRef, tru: ExprRef, fals: ExprRef) -> ExprRef {
+        self.ctx.borrow_mut().ite(cond, tru, fals)
     }
     pub fn implies(&self, a: ExprRef, b: ExprRef) -> ExprRef {
         self.ctx.borrow_mut().implies(a, b)
@@ -496,6 +528,11 @@ impl<'a> Builder<'a> {
     }
     pub fn apply_sign(&self, e: ExprRef, by: WidthInt, s: bool) -> ExprRef {
         self.ctx.borrow_mut().apply_sign(e, by, s)
+    }
+
+    /// Sign or zero extends depending on the value of `signed`.
+    pub fn extend(&mut self, e: ExprRef, by: WidthInt, signed: bool) -> ExprRef {
+        self.ctx.borrow_mut().extend(e, by, signed)
     }
 
     pub fn array_store(&self, array: ExprRef, index: ExprRef, data: ExprRef) -> ExprRef {

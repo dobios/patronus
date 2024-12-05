@@ -1,0 +1,17 @@
+[package]
+name = "patronus-egraphs-cond-synth"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+patronus.workspace = true
+patronus-egraphs = { path = "../../patronus-egraphs"}
+egg.workspace = true
+clap.workspace = true
+rustc-hash.workspace = true
+easy-smt.workspace = true

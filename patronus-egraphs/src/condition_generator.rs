@@ -153,27 +153,20 @@ pub fn check_cond1(
     let c = ctx.bv_symbol("C", wc);
     // lhs: a << (b + c)
     let lhs = ctx.build(|cx| {
-        let sr = sa & sb & sc;
         let w_in_bc = cmp::max(wb, wc) + 1;
-        cx.apply_sign(
-            cx.shift_left(a,
-                cx.add(b, c)
-            ), wr, sr
+        cx.shift_left(a, 
+            cx.apply_sign(
+                cx.add(b, c), 
+                w_in_bc, wbc, sbc)
         )
     });
+
     // rhs: (a << b) << c
     let rhs = ctx.build(|cx| {
-        let sr = sa & sb & sc;
-        cx.apply_sign(
-            cx.shift_left(
-                cx.apply_sign(
-                    cx.shift_left( 
-                        cx.apply_sign(a, wa, sa),
-                        cx.apply_sign(b, wb, sb)
-                    ), wab, sab
-                ),
-                cx.apply_sign(c, wc, sc)
-            ), wr, sr
+        // left shift is unsigned so we ignore it here
+        cx.shift_left(
+            cx.shift_left(a,b),
+            c
         )
     });
     

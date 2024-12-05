@@ -355,7 +355,7 @@ impl Context {
     /// Applies a given sign extension and slices if out width is smaller than in width
     pub fn apply_sign(&mut self, e:ExprRef, w_in: WidthInt, w_out: WidthInt, s: bool) -> ExprRef {
         match w_out.cmp(&w_in) {
-            std::cmp::Ordering::Less => self.slice(e, w_out, w_in),
+            std::cmp::Ordering::Less => self.slice(e, w_out, 0), // force the bv to fit in w_out
             std::cmp::Ordering::Equal => e,
             std::cmp::Ordering::Greater if !s => self.zero_extend(e, w_out - w_in),
             std::cmp::Ordering::Greater => self.sign_extend(e, w_out - w_in),
@@ -532,8 +532,8 @@ impl<'a> Builder<'a> {
     pub fn sign_extend(&self, e: ExprRef, by: WidthInt) -> ExprRef {
         self.ctx.borrow_mut().sign_extend(e, by)
     }
-    pub fn apply_sign(&self, e: ExprRef, by: WidthInt, s: bool) -> ExprRef {
-        self.ctx.borrow_mut().apply_sign(e, by, s)
+    pub fn apply_sign(&self, e: ExprRef, w_in: WidthInt, w_out: WidthInt, s: bool) -> ExprRef {
+        self.ctx.borrow_mut().apply_sign(e, w_in, w_out, s)
     }
 
     /// Sign or zero extends depending on the value of `signed`.

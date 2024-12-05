@@ -7,7 +7,7 @@ static TRAINING_DATA_PATH: &str = "./src/egraphs/train_data.csv";
 static CONFLICT_RESOLVED_TRAINING_DATA: &str = "./src/egraphs/train_data_modified.csv";
 
 use crate::trees::Branch;
-use easy_smt::Response;
+use easy_smt::*;
 use csv::ReaderBuilder;
 use csv::Writer;
 use patronus::expr::*;
@@ -146,7 +146,7 @@ pub fn check_cond1(
     sc: bool, sbc: bool, sab: bool 
 ) -> Option<bool> { 
     // Encode rewrite rule
-    let mut ctx = Context::default();
+    let mut ctx = patronus::expr::Context::default();
     let a = ctx.bv_symbol("A", wa);
     let b = ctx.bv_symbol("B", wb);
     let c = ctx.bv_symbol("C", wc);
@@ -189,14 +189,14 @@ pub fn check_cond1(
 // returns Some(true) if unsat
 //         Some(false) if sat
 //         None if error
-pub fn check(ctx: &mut Context, lhs: ExprRef, rhs: ExprRef) -> Option<bool> {
+pub fn check(ctx: &mut patronus::expr::Context, lhs: ExprRef, rhs: ExprRef) -> Option<bool> {
 
     // Build out miter for EC
     let miter = ctx.build(|cx| {
-        cx.not(cx.bv_equal(lhs, rhs))
+        cx.not(cx.equal(lhs, rhs))
     });
     // Create a solver instance
-    let solver: crate::mc::SmtSolverCmd = BITWUZLA_CMD;
+    let solver: SmtSolverCmd = BITWUZLA_CMD;
     let mut smt_ctx = easy_smt::ContextBuilder::new()
             .solver(solver.name, solver.args)
             .build().unwrap();

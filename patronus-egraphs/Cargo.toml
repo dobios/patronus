@@ -12,4 +12,21 @@ rust-version.workspace = true
 [dependencies]
 patronus = { path = "../patronus" }
 egg.workspace = true
+#baa.workspace = true
+easy-smt.workspace = true
+smallvec = { version = "1.x", features = ["union"] }
+boolean_expression = "0.4.4"
+regex = "1.11.1"
 baa.workspace = true
+rustc-hash.workspace = true
+ndarray = "0.15"
+linfa = "0.7.0"
+linfa-trees = "0.7.0"
+csv = "1.1"
+rustlearn = "0.5.0"
+rustrees = "0.2.4"
+rayon = "1.7.0"
+pyo3-ffi = "0.18.1"
+pyo3 = "0.18.1"
+arrow = "37.0.0"
+permutation = "0.4.1"

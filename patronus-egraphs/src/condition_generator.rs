@@ -6,10 +6,13 @@
 static TRAINING_DATA_PATH: &str = "./src/egraphs/train_data.csv";
 static CONFLICT_RESOLVED_TRAINING_DATA: &str = "./src/egraphs/train_data_modified.csv";
 
-use crate::{egraphs::trees::Branch, expr::*, mc::{check_assuming, BITWUZLA_CMD}, smt::convert_expr};
+use crate::trees::Branch;
 use easy_smt::Response;
 use csv::ReaderBuilder;
 use csv::Writer;
+use patronus::expr::*;
+use patronus::mc::*;
+use patronus::smt::*;
 use std::fs::File;
 use std::error::Error;
 use std::collections::VecDeque;

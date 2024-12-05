@@ -13,6 +13,7 @@ use csv::Writer;
 use patronus::expr::*;
 use patronus::mc::*;
 use patronus::smt::*;
+use std::cmp;
 use std::fs::File;
 use std::error::Error;
 use std::collections::VecDeque;
@@ -153,15 +154,10 @@ pub fn check_cond1(
     // lhs: a << (b + c)
     let lhs = ctx.build(|cx| {
         let sr = sa & sb & sc;
+        let w_in_bc = cmp::max(wb, wc) + 1;
         cx.apply_sign(
-            cx.shift_left(
-                cx.apply_sign(a, wa, sa),
-                cx.apply_sign(   
-                    cx.add( 
-                        cx.apply_sign(b, wb, sb),
-                        cx.apply_sign(c, wc, sc)
-                    ), wbc, sbc
-                )
+            cx.shift_left(a,
+                cx.add(b, c)
             ), wr, sr
         )
     });

@@ -351,9 +351,15 @@ impl Context {
             self.add_expr(Expr::BVSignExt { e, by, width })
         }
     }
-    pub fn apply_sign(&mut self, e:ExprRef, by: WidthInt, s: bool) -> ExprRef {
-        if s { self.sign_extend(e, by) } 
-        else { self.zero_extend(e, by) }
+
+    /// Applies a given sign extension and slices if out width is smaller than in width
+    pub fn apply_sign(&mut self, e:ExprRef, w_in: WidthInt, w_out: WidthInt, s: bool) -> ExprRef {
+        match w_out.cmp(&w_in) {
+            std::cmp::Ordering::Less => self.slice(e, w_out, w_in),
+            std::cmp::Ordering::Equal => e,
+            std::cmp::Ordering::Greater if !s => self.zero_extend(e, w_out - w_in),
+            std::cmp::Ordering::Greater => self.sign_extend(e, w_out - w_in),
+        }
     }
 
     /// Sign or zero extends depending on the value of `signed`.
